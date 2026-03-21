@@ -216,9 +216,14 @@ Examples:
 			if devCfg.Customizations == nil {
 				devCfg.Customizations = make(map[string]interface{})
 			}
-			customData, _ := json.Marshal(custom)
+			customData, err := json.Marshal(custom)
+			if err != nil {
+				return fmt.Errorf("marshaling customization: %w", err)
+			}
 			var customMap map[string]interface{}
-			json.Unmarshal(customData, &customMap)
+			if err := json.Unmarshal(customData, &customMap); err != nil {
+				return fmt.Errorf("converting customization: %w", err)
+			}
 			devCfg.Customizations["devc"] = customMap
 
 			if err := config.SaveDevcontainerConfig(cfgPath, devCfg); err != nil {

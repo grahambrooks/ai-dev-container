@@ -141,13 +141,14 @@ You can also pass a full image reference directly (e.g., --image myregistry/myim
 			fmt.Printf("Created %s\n", target)
 			fmt.Printf("Image:  %s\n", imageRef)
 			if agentFlag != "" {
-				p := agent.GetProfile(agentFlag)
-				fmt.Printf("Agent:  %s (%s)\n", agentFlag, p.DisplayName)
-				if p.InstallCmd != "" {
-					fmt.Printf("Install: %s\n", p.InstallCmd)
-				}
-				for ref := range p.Features {
-					fmt.Printf("Feature: %s\n", ref)
+				if p := agent.GetProfile(agentFlag); p != nil {
+					fmt.Printf("Agent:  %s (%s)\n", agentFlag, p.DisplayName)
+					if p.InstallCmd != "" {
+						fmt.Printf("Install: %s\n", p.InstallCmd)
+					}
+					for ref := range p.Features {
+						fmt.Printf("Feature: %s\n", ref)
+					}
 				}
 			}
 			return nil

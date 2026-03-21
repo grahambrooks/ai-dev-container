@@ -74,7 +74,7 @@ func (m *Manager) Up(opts UpOptions) error {
 	if merged.Agent != "" {
 		agentProfile = agent.GetProfile(merged.Agent)
 		if agentProfile == nil {
-			fmt.Fprintf(os.Stderr, "warning: unknown agent %q, skipping agent configuration\n", merged.Agent)
+			_, _ = fmt.Fprintf(os.Stderr, "warning: unknown agent %q, skipping agent configuration\n", merged.Agent)
 		}
 	}
 
@@ -102,9 +102,9 @@ func (m *Manager) Up(opts UpOptions) error {
 		// Build image with features if any are configured
 		effectiveImage := devCfg.Image
 		if len(devCfg.Features) > 0 {
-			built, err := m.Docker.BuildImageWithFeatures(devCfg.Image, devCfg.Features, containerName)
-			if err != nil {
-				return fmt.Errorf("building image with features: %w", err)
+			built, buildErr := m.Docker.BuildImageWithFeatures(devCfg.Image, devCfg.Features, containerName)
+			if buildErr != nil {
+				return fmt.Errorf("building image with features: %w", buildErr)
 			}
 			effectiveImage = built
 		}
@@ -115,7 +115,6 @@ func (m *Manager) Up(opts UpOptions) error {
 
 		fmt.Printf("Creating container %s...\n", containerName)
 		if err := m.Docker.CreateAndStart(containerName, devCfg, merged, opts.WorkspaceFolder, agentProfile); err != nil {
-			// Restore original image ref before returning
 			devCfg.Image = origImage
 			return fmt.Errorf("creating container: %w", err)
 		}
@@ -123,18 +122,18 @@ func (m *Manager) Up(opts UpOptions) error {
 
 		// Run lifecycle commands in order
 		if devCfg.OnCreateCommand != nil {
-			if err := m.runLifecycleCommand(containerName, devCfg.OnCreateCommand, "onCreateCommand"); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: onCreateCommand failed: %v\n", err)
+			if lcErr := m.runLifecycleCommand(containerName, devCfg.OnCreateCommand, "onCreateCommand"); lcErr != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "warning: onCreateCommand failed: %v\n", lcErr)
 			}
 		}
 		if devCfg.PostCreateCommand != nil {
-			if err := m.runLifecycleCommand(containerName, devCfg.PostCreateCommand, "postCreateCommand"); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: postCreateCommand failed: %v\n", err)
+			if lcErr := m.runLifecycleCommand(containerName, devCfg.PostCreateCommand, "postCreateCommand"); lcErr != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "warning: postCreateCommand failed: %v\n", lcErr)
 			}
 		}
 		if devCfg.PostStartCommand != nil {
-			if err := m.runLifecycleCommand(containerName, devCfg.PostStartCommand, "postStartCommand"); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: postStartCommand failed: %v\n", err)
+			if lcErr := m.runLifecycleCommand(containerName, devCfg.PostStartCommand, "postStartCommand"); lcErr != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "warning: postStartCommand failed: %v\n", lcErr)
 			}
 		}
 	}
@@ -246,7 +245,6 @@ func (m *Manager) List() ([]types.ContainerInfo, error) {
 		return nil, err
 	}
 
-	// Attach session counts
 	for i := range containers {
 		containers[i].Sessions = m.Session.Count(containers[i].Name)
 	}
@@ -269,7 +267,7 @@ func (m *Manager) Clean(dryRun bool) ([]string, error) {
 				continue
 			}
 			if err := m.Docker.Remove(c.Name, false); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to remove %s: %v\n", c.Name, err)
+				_, _ = fmt.Fprintf(os.Stderr, "warning: failed to remove %s: %v\n", c.Name, err)
 				continue
 			}
 			m.Session.Clean(c.Name)

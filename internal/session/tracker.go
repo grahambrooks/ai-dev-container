@@ -78,7 +78,7 @@ func (t *Tracker) Count(containerName string) int {
 
 // Clean removes the session file for a container.
 func (t *Tracker) Clean(containerName string) {
-	os.Remove(t.sessionFile(containerName))
+	_ = os.Remove(t.sessionFile(containerName))
 }
 
 func (t *Tracker) load(containerName string) *sessionData {
@@ -137,4 +137,3 @@ func plural(n int) string {
 	}
 	return "s"
 }
-

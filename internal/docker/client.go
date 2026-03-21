@@ -333,19 +333,15 @@ func (c *Client) ExecAs(name string, command []string, opts ExecOptions) error {
 
 	if isTTY {
 		// Set terminal to raw mode for interactive sessions
-		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-		if err == nil {
+		if oldState, rawErr := term.MakeRaw(int(os.Stdin.Fd())); rawErr == nil {
 			defer term.Restore(int(os.Stdin.Fd()), oldState)
 		}
 
 		// Bidirectional copy
-		errCh := make(chan error, 1)
 		go func() {
-			_, err := io.Copy(attachResult.Conn, os.Stdin)
-			errCh <- err
+			_, _ = io.Copy(attachResult.Conn, os.Stdin)
 		}()
 		_, _ = io.Copy(os.Stdout, attachResult.Reader)
-		// Don't wait for stdin copy — it'll end when the connection closes
 	} else if opts.Interactive {
 		// Non-TTY but interactive (stdin piped)
 		go func() {

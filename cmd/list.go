@@ -38,13 +38,13 @@ func newListCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tSTATE\tIMAGE\tAGENT\tSESSIONS\tWORKSPACE")
+			_, _ = fmt.Fprintln(w, "NAME\tSTATE\tIMAGE\tAGENT\tSESSIONS\tWORKSPACE")
 			for _, c := range containers {
 				agent := c.Agent
 				if agent == "" {
 					agent = "-"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n",
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n",
 					c.Name, c.State, c.Image, agent, c.Sessions, c.WorkspaceFolder)
 			}
 			return w.Flush()

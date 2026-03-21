@@ -30,9 +30,9 @@ func FindDevcontainerPath(workspaceFolder string) string {
 func SaveDevcontainerConfig(path string, cfg *types.DevContainerConfig) error {
 	// Read existing raw JSON to preserve fields we don't model
 	existing := make(map[string]interface{})
-	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, &existing); err != nil {
-			return fmt.Errorf("parsing existing config: %w", err)
+	if data, readErr := os.ReadFile(path); readErr == nil {
+		if unmarshalErr := json.Unmarshal(data, &existing); unmarshalErr != nil {
+			return fmt.Errorf("parsing existing config: %w", unmarshalErr)
 		}
 	}
 
