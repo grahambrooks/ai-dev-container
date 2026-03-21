@@ -34,6 +34,27 @@ func NewClient() (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating docker client: %w", err)
 	}
+
+	// Verify connectivity with a ping
+	ctx := context.Background()
+	if _, err := api.Ping(ctx, dockerclient.PingOptions{}); err != nil {
+		return nil, fmt.Errorf(`cannot connect to a container runtime.
+
+devc requires a running container runtime with a Docker-compatible API.
+
+Supported runtimes:
+  - Docker Desktop    https://www.docker.com/products/docker-desktop/
+  - Colima            https://github.com/abiosoft/colima
+  - Rancher Desktop   https://rancherdesktop.io/ (moby mode)
+  - OrbStack          https://orbstack.dev/
+  - Podman            https://podman.io/
+
+If the runtime is running but devc cannot find it, set DOCKER_HOST:
+  export DOCKER_HOST="unix:///path/to/docker.sock"
+
+Underlying error: %w`, err)
+	}
+
 	return &Client{api: api}, nil
 }
 

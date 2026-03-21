@@ -29,7 +29,7 @@ make build
 
 ### Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/)
+- A container runtime (see [Supported runtimes](#supported-container-runtimes) below)
 - Go 1.22+ (for building from source)
 
 ## Quick start
@@ -69,7 +69,6 @@ devc stop
 ### Global flags
 
 ```
---docker-path       Path to docker binary
 --log-level         Log level: debug, info, warn, error (default: info)
 --output-format     Output format: text, json (default: text)
 ```
@@ -121,6 +120,39 @@ User-level defaults that apply to all projects unless overridden at the project 
 | Capabilities | Drop ALL | Drop ALL + minimal | Docker defaults |
 | Resources | 2 CPU, 4 GB | 4 CPU, 8 GB | Unlimited |
 | User | Non-root | Non-root | Non-root |
+
+## Supported container runtimes
+
+`devc` communicates with container runtimes via the Docker Engine API — it does not shell out to a CLI binary. Any runtime that exposes a Docker-compatible API socket will work.
+
+| Runtime | Status | Notes |
+|---|---|---|
+| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Fully supported | Default socket at `/var/run/docker.sock` |
+| [Colima](https://github.com/abiosoft/colima) | Fully supported | Runs real dockerd; socket at `~/.colima/default/docker.sock` |
+| [Rancher Desktop](https://rancherdesktop.io/) (moby mode) | Fully supported | Runs real dockerd; socket at `~/.rd/docker.sock` |
+| [OrbStack](https://orbstack.dev/) | Fully supported | Own engine with near-100% Docker API compat |
+| [Podman](https://podman.io/) | Supported | Compat API layer; Podman 5.x+ recommended |
+| [Finch](https://github.com/runfinch/finch) | Experimental | Partial Docker API v1.43 via finch-daemon |
+
+### Configuring non-default runtimes
+
+`devc` reads the standard `DOCKER_HOST` environment variable to locate the container runtime socket:
+
+```sh
+# Colima
+export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+
+# Rancher Desktop (without admin access)
+export DOCKER_HOST="unix://$HOME/.rd/docker.sock"
+
+# Podman
+export DOCKER_HOST="unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')"
+
+# OrbStack
+export DOCKER_HOST="unix://$HOME/.orbstack/run/docker.sock"
+```
+
+Alternatively, configure a [Docker context](https://docs.docker.com/engine/manage-resources/contexts/) and `devc` will use it automatically.
 
 ## License
 
