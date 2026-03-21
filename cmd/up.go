@@ -17,7 +17,7 @@ func newUpCmd() *cobra.Command {
 		Short: "Create and start a development container",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr, err := container.NewManager(flagDockerPath)
+			mgr, err := container.NewManager()
 			if err != nil {
 				return err
 			}

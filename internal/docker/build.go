@@ -3,64 +3,14 @@ package docker
 import (
 	"crypto/sha256"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
-
-// BuildImageWithFeatures builds a custom image that installs devcontainer
-// features on top of the base image. Returns the built image tag.
-//
-// Features are installed by generating a Dockerfile that runs each feature's
-// install script. For official devcontainer features (ghcr.io/devcontainers/features/*)
-// we map to the equivalent apt/npm/pip install commands since we can't pull and
-// execute OCI feature install scripts without the full devcontainers CLI.
-func (c *Client) BuildImageWithFeatures(
-	baseImage string,
-	features map[string]interface{},
-	containerName string,
-) (string, error) {
-	if len(features) == 0 {
-		return baseImage, nil
-	}
-
-	// Generate a deterministic tag based on base image + features
-	tag := buildTag(baseImage, features, containerName)
-
-	// Check if image already exists
-	if c.ImageExists(tag) {
-		return tag, nil
-	}
-
-	// Generate Dockerfile
-	dockerfile := generateDockerfile(baseImage, features)
-
-	// Create temp build context
-	buildDir, err := os.MkdirTemp("", "devc-build-*")
-	if err != nil {
-		return "", fmt.Errorf("creating build dir: %w", err)
-	}
-	defer os.RemoveAll(buildDir)
-
-	dfPath := filepath.Join(buildDir, "Dockerfile")
-	if err := os.WriteFile(dfPath, []byte(dockerfile), 0644); err != nil {
-		return "", fmt.Errorf("writing Dockerfile: %w", err)
-	}
-
-	fmt.Printf("Building image with features...\n")
-	if err := c.runInteractive("build", "-t", tag, "-f", dfPath, buildDir); err != nil {
-		return "", fmt.Errorf("building image: %w", err)
-	}
-
-	return tag, nil
-}
 
 func buildTag(baseImage string, features map[string]interface{}, containerName string) string {
 	h := sha256.New()
 	h.Write([]byte(baseImage))
 
-	// Sort feature keys for deterministic hash
 	keys := make([]string, 0, len(features))
 	for k := range features {
 		keys = append(keys, k)
@@ -79,11 +29,8 @@ func generateDockerfile(baseImage string, features map[string]interface{}) strin
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("FROM %s\n\n", baseImage))
-
-	// Switch to root for installations
 	b.WriteString("USER root\n\n")
 
-	// Sort features for deterministic builds
 	keys := make([]string, 0, len(features))
 	for k := range features {
 		keys = append(keys, k)
@@ -99,8 +46,6 @@ func generateDockerfile(baseImage string, features map[string]interface{}) strin
 		}
 	}
 
-	// Switch back to non-root if the base image uses one
-	// Most devcontainer images use vscode or a non-root user
 	b.WriteString("# Restore non-root user if available\n")
 	b.WriteString("ARG USERNAME=vscode\n")
 	b.WriteString("RUN id -u ${USERNAME} 2>/dev/null && chown -R ${USERNAME} /home/${USERNAME} || true\n")
@@ -108,7 +53,6 @@ func generateDockerfile(baseImage string, features map[string]interface{}) strin
 	return b.String()
 }
 
-// featureOpts extracts options map from a feature value.
 func featureOpts(v interface{}) map[string]string {
 	opts := make(map[string]string)
 	switch val := v.(type) {
@@ -124,12 +68,8 @@ func featureOpts(v interface{}) map[string]string {
 	return opts
 }
 
-// featureInstallCommand maps a devcontainer feature OCI reference to an install command.
 func featureInstallCommand(ref string, opts map[string]string) string {
-	// Extract the feature name from the OCI reference
-	// e.g., "ghcr.io/devcontainers/features/node:1" -> "node"
 	name := extractFeatureName(ref)
-
 	version := opts["version"]
 
 	switch name {
@@ -218,7 +158,6 @@ func featureInstallCommand(ref string, opts map[string]string) string {
 		)
 
 	default:
-		// For unknown features, try a generic apt install
 		return fmt.Sprintf(
 			"echo 'Feature %s: manual installation may be required' && "+
 				"apt-get update && apt-get install -y %s 2>/dev/null || "+
@@ -229,22 +168,13 @@ func featureInstallCommand(ref string, opts map[string]string) string {
 }
 
 func extractFeatureName(ref string) string {
-	// "ghcr.io/devcontainers/features/node:1" -> "node"
-	// "ghcr.io/some-org/features/custom:latest" -> "custom"
-	// "node" -> "node"
-
-	// Remove version tag
 	if idx := strings.LastIndex(ref, ":"); idx != -1 {
-		// But only if there's a / before it (to not strip port from registry)
 		if strings.Contains(ref[:idx], "/") || !strings.Contains(ref, "/") {
 			ref = ref[:idx]
 		}
 	}
-
-	// Get last path component
 	if idx := strings.LastIndex(ref, "/"); idx != -1 {
 		return ref[idx+1:]
 	}
-
 	return ref
 }

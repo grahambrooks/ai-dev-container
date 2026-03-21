@@ -4,18 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"golang.org/x/term"
-
 	"github.com/grahambrooks/devc/internal/agent"
 	"github.com/grahambrooks/devc/internal/config"
 	"github.com/grahambrooks/devc/internal/docker"
 	"github.com/grahambrooks/devc/internal/session"
 	"github.com/grahambrooks/devc/pkg/types"
 )
-
-func isTerminal() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
-}
 
 // Manager orchestrates container lifecycle operations.
 type Manager struct {
@@ -24,8 +18,8 @@ type Manager struct {
 }
 
 // NewManager creates a container manager.
-func NewManager(dockerPath string) (*Manager, error) {
-	dc, err := docker.NewClient(dockerPath)
+func NewManager() (*Manager, error) {
+	dc, err := docker.NewClient()
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +160,7 @@ func (m *Manager) Exec(workspaceFolder string, command []string) error {
 	}
 
 	return m.Docker.ExecAs(containerName, command, docker.ExecOptions{
-		Interactive: isTerminal(),
+		Interactive: true,
 	})
 }
 

@@ -13,7 +13,7 @@ func newExecCmd() *cobra.Command {
 		Short: "Execute a command in a running container",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr, err := container.NewManager(flagDockerPath)
+			mgr, err := container.NewManager()
 			if err != nil {
 				return err
 			}

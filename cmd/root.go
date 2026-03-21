@@ -7,20 +7,18 @@ import (
 )
 
 var (
-	flagDockerPath  string
-	flagLogLevel    string
+	flagLogLevel     string
 	flagOutputFormat string
 )
 
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "devc",
-		Short: "AI-safe development containers",
-		Long:  "Create and manage AI-safe development containers with devcontainer.json support.",
+		Use:          "devc",
+		Short:        "AI-safe development containers",
+		Long:         "Create and manage AI-safe development containers with devcontainer.json support.",
 		SilenceUsage: true,
 	}
 
-	root.PersistentFlags().StringVar(&flagDockerPath, "docker-path", "", "path to docker binary")
 	root.PersistentFlags().StringVar(&flagLogLevel, "log-level", "info", "log level (debug, info, warn, error)")
 	root.PersistentFlags().StringVar(&flagOutputFormat, "output-format", "text", "output format (text, json)")
 

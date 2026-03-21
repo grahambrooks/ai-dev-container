@@ -13,7 +13,7 @@ func newDownCmd() *cobra.Command {
 		Short: "Stop and remove a container",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr, err := container.NewManager(flagDockerPath)
+			mgr, err := container.NewManager()
 			if err != nil {
 				return err
 			}
