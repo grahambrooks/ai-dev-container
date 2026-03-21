@@ -141,11 +141,25 @@ func (c *Client) Remove(name string, force bool) error {
 	return c.runInteractive(args...)
 }
 
+// ExecOptions configures a docker exec call.
+type ExecOptions struct {
+	Interactive bool
+	User        string // run as this user (e.g., "root", "1000:1000")
+}
+
 // Exec runs a command inside a running container.
 func (c *Client) Exec(name string, command []string, interactive bool) error {
+	return c.ExecAs(name, command, ExecOptions{Interactive: interactive})
+}
+
+// ExecAs runs a command inside a running container with additional options.
+func (c *Client) ExecAs(name string, command []string, opts ExecOptions) error {
 	args := []string{"exec"}
-	if interactive {
+	if opts.Interactive {
 		args = append(args, "-it")
+	}
+	if opts.User != "" {
+		args = append(args, "-u", opts.User)
 	}
 	args = append(args, name)
 	args = append(args, command...)

@@ -4,12 +4,18 @@ import (
 	"fmt"
 	"os"
 
+	"golang.org/x/term"
+
 	"github.com/grahambrooks/devc/internal/agent"
 	"github.com/grahambrooks/devc/internal/config"
 	"github.com/grahambrooks/devc/internal/docker"
 	"github.com/grahambrooks/devc/internal/session"
 	"github.com/grahambrooks/devc/pkg/types"
 )
+
+func isTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
 
 // Manager orchestrates container lifecycle operations.
 type Manager struct {
@@ -91,7 +97,7 @@ func (m *Manager) Up(opts UpOptions) error {
 		}
 
 	case docker.StateNotFound:
-		// Pull image if needed
+		// Pull base image if needed
 		if devCfg.Image != "" && !m.Docker.ImageExists(devCfg.Image) {
 			fmt.Printf("Pulling image %s...\n", devCfg.Image)
 			if err := m.Docker.Pull(devCfg.Image); err != nil {
@@ -99,15 +105,42 @@ func (m *Manager) Up(opts UpOptions) error {
 			}
 		}
 
-		fmt.Printf("Creating container %s...\n", containerName)
-		if err := m.Docker.CreateAndStart(containerName, devCfg, merged, opts.WorkspaceFolder, agentProfile); err != nil {
-			return fmt.Errorf("creating container: %w", err)
+		// Build image with features if any are configured
+		effectiveImage := devCfg.Image
+		if len(devCfg.Features) > 0 {
+			built, err := m.Docker.BuildImageWithFeatures(devCfg.Image, devCfg.Features, containerName)
+			if err != nil {
+				return fmt.Errorf("building image with features: %w", err)
+			}
+			effectiveImage = built
 		}
 
-		// Run post-create command if configured
+		// Swap the image for container creation
+		origImage := devCfg.Image
+		devCfg.Image = effectiveImage
+
+		fmt.Printf("Creating container %s...\n", containerName)
+		if err := m.Docker.CreateAndStart(containerName, devCfg, merged, opts.WorkspaceFolder, agentProfile); err != nil {
+			// Restore original image ref before returning
+			devCfg.Image = origImage
+			return fmt.Errorf("creating container: %w", err)
+		}
+		devCfg.Image = origImage
+
+		// Run lifecycle commands in order
+		if devCfg.OnCreateCommand != nil {
+			if err := m.runLifecycleCommand(containerName, devCfg.OnCreateCommand, "onCreateCommand"); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: onCreateCommand failed: %v\n", err)
+			}
+		}
 		if devCfg.PostCreateCommand != nil {
 			if err := m.runLifecycleCommand(containerName, devCfg.PostCreateCommand, "postCreateCommand"); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: postCreateCommand failed: %v\n", err)
+			}
+		}
+		if devCfg.PostStartCommand != nil {
+			if err := m.runLifecycleCommand(containerName, devCfg.PostStartCommand, "postStartCommand"); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: postStartCommand failed: %v\n", err)
 			}
 		}
 	}
@@ -132,7 +165,9 @@ func (m *Manager) Exec(workspaceFolder string, command []string) error {
 		return fmt.Errorf("container %s is not running (state: %s)", containerName, state)
 	}
 
-	return m.Docker.Exec(containerName, command, true)
+	return m.Docker.ExecAs(containerName, command, docker.ExecOptions{
+		Interactive: isTerminal(),
+	})
 }
 
 // Attach attaches an interactive session to the container.
@@ -252,17 +287,19 @@ func (m *Manager) Clean(dryRun bool) ([]string, error) {
 }
 
 func (m *Manager) runLifecycleCommand(containerName string, cmd interface{}, name string) error {
+	opts := docker.ExecOptions{User: "root"}
+
 	switch v := cmd.(type) {
 	case string:
 		fmt.Printf("Running %s: %s\n", name, v)
-		return m.Docker.Exec(containerName, []string{"sh", "-c", v}, false)
+		return m.Docker.ExecAs(containerName, []string{"sh", "-c", v}, opts)
 	case []interface{}:
 		args := make([]string, len(v))
 		for i, a := range v {
 			args[i] = fmt.Sprintf("%v", a)
 		}
 		fmt.Printf("Running %s: %v\n", name, args)
-		return m.Docker.Exec(containerName, args, false)
+		return m.Docker.ExecAs(containerName, args, opts)
 	default:
 		return fmt.Errorf("unsupported command format for %s", name)
 	}

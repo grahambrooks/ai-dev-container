@@ -129,6 +129,99 @@ func TestMergeCustomization(t *testing.T) {
 	}
 }
 
+func TestFindImage(t *testing.T) {
+	img := FindImage("python")
+	if img == nil {
+		t.Fatal("expected to find python image")
+	}
+	if img.Reference == "" {
+		t.Error("expected non-empty reference")
+	}
+
+	if FindImage("nonexistent") != nil {
+		t.Error("expected nil for unknown image")
+	}
+}
+
+func TestFindImage_AllHaveReferences(t *testing.T) {
+	for _, img := range ListImages() {
+		if img.Name == "" {
+			t.Error("image has empty name")
+		}
+		if img.Reference == "" {
+			t.Errorf("image %q has empty reference", img.Name)
+		}
+		if img.Description == "" {
+			t.Errorf("image %q has empty description", img.Name)
+		}
+	}
+}
+
+func TestSaveDevcontainerConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".devcontainer", "devcontainer.json")
+
+	cfg := &types.DevContainerConfig{
+		Name:  "test-save",
+		Image: "ubuntu:22.04",
+		Features: map[string]interface{}{
+			"ghcr.io/devcontainers/features/git:latest": map[string]interface{}{},
+		},
+	}
+
+	if err := SaveDevcontainerConfig(path, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the file was written and can be loaded back
+	loaded, err := LoadDevcontainerConfig(dir)
+	if err != nil {
+		t.Fatalf("failed to reload: %v", err)
+	}
+	if loaded.Name != "test-save" {
+		t.Errorf("expected name 'test-save', got %q", loaded.Name)
+	}
+	if loaded.Image != "ubuntu:22.04" {
+		t.Errorf("expected image 'ubuntu:22.04', got %q", loaded.Image)
+	}
+	if len(loaded.Features) != 1 {
+		t.Errorf("expected 1 feature, got %d", len(loaded.Features))
+	}
+}
+
+func TestSaveDevcontainerConfig_PreservesExistingFields(t *testing.T) {
+	dir := t.TempDir()
+	devDir := filepath.Join(dir, ".devcontainer")
+	os.MkdirAll(devDir, 0755)
+	path := filepath.Join(devDir, "devcontainer.json")
+
+	// Write initial config with an extra field
+	initial := `{"name": "test", "image": "old:image", "postCreateCommand": "npm install"}`
+	os.WriteFile(path, []byte(initial), 0644)
+
+	// Update just the image
+	cfg := &types.DevContainerConfig{
+		Name:  "test",
+		Image: "new:image",
+	}
+
+	if err := SaveDevcontainerConfig(path, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Reload raw to check postCreateCommand is preserved
+	data, _ := os.ReadFile(path)
+	var raw map[string]interface{}
+	json.Unmarshal(data, &raw)
+
+	if raw["image"] != "new:image" {
+		t.Errorf("expected updated image, got %v", raw["image"])
+	}
+	if raw["postCreateCommand"] != "npm install" {
+		t.Errorf("expected preserved postCreateCommand, got %v", raw["postCreateCommand"])
+	}
+}
+
 func TestWorkspaceInContainer(t *testing.T) {
 	cfg := &types.DevContainerConfig{}
 	path := WorkspaceInContainer(cfg, "/home/user/my-project")
