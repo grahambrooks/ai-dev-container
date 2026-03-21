@@ -7,10 +7,10 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/graham/devc/internal/agent"
-	"github.com/graham/devc/internal/config"
-	"github.com/graham/devc/internal/security"
-	"github.com/graham/devc/pkg/types"
+	"github.com/grahambrooks/devc/internal/agent"
+	"github.com/grahambrooks/devc/internal/config"
+	"github.com/grahambrooks/devc/internal/security"
+	"github.com/grahambrooks/devc/pkg/types"
 )
 
 // Client wraps Docker CLI operations.
@@ -34,10 +34,10 @@ func NewClient(dockerPath string) (*Client, error) {
 type ContainerState string
 
 const (
-	StateRunning    ContainerState = "running"
-	StateStopped    ContainerState = "stopped"
-	StateNotFound   ContainerState = "not_found"
-	StateCreated    ContainerState = "created"
+	StateRunning  ContainerState = "running"
+	StateStopped  ContainerState = "stopped"
+	StateNotFound ContainerState = "not_found"
+	StateCreated  ContainerState = "created"
 )
 
 // Inspect returns the state of a container by name.
@@ -242,7 +242,7 @@ func applySecurityArgs(profile *types.SecurityProfile, custom *types.DevcCustomi
 		args = append(args, "--network=none")
 	case "host":
 		args = append(args, "--network=host")
-	// "restricted" uses the default bridge; network policies applied separately
+		// "restricted" uses the default bridge; network policies applied separately
 	}
 
 	// User

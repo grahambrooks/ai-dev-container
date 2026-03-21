@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/graham/devc/internal/container"
+	"github.com/grahambrooks/devc/internal/container"
 	"github.com/spf13/cobra"
 )
 

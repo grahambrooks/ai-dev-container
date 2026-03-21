@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/graham/devc/internal/agent"
+	"github.com/grahambrooks/devc/internal/agent"
 	"github.com/spf13/cobra"
 )
 
@@ -33,8 +33,8 @@ func newInitCmd() *cobra.Command {
 					"allowlist": []string{},
 				},
 				"resources": map[string]interface{}{
-					"cpus":     "4",
-					"memory":   "8g",
+					"cpus":      "4",
+					"memory":    "8g",
 					"pidsLimit": 256,
 				},
 				"session": map[string]interface{}{

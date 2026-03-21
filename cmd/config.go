@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/graham/devc/internal/config"
+	"github.com/grahambrooks/devc/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -35,9 +35,9 @@ func newConfigCmd() *cobra.Command {
 			merged := config.MergeCustomization(globalCfg, custom)
 
 			result := map[string]interface{}{
-				"devcontainer":  devCfg,
-				"devc":          merged,
-				"containerName": config.ContainerName(ws),
+				"devcontainer":   devCfg,
+				"devc":           merged,
+				"containerName":  config.ContainerName(ws),
 				"workspaceMount": config.WorkspaceInContainer(devCfg, ws),
 			}
 

@@ -1,6 +1,6 @@
 package security
 
-import "github.com/graham/devc/pkg/types"
+import "github.com/grahambrooks/devc/pkg/types"
 
 var profiles = map[string]*types.SecurityProfile{
 	"strict": {
@@ -9,8 +9,8 @@ var profiles = map[string]*types.SecurityProfile{
 			Mode: "none",
 		},
 		Resources: types.ResourceConfig{
-			CPUs:     "2",
-			Memory:   "4g",
+			CPUs:      "2",
+			Memory:    "4g",
 			PidsLimit: 128,
 		},
 		DropAllCaps: true,
@@ -22,8 +22,8 @@ var profiles = map[string]*types.SecurityProfile{
 			Mode: "restricted",
 		},
 		Resources: types.ResourceConfig{
-			CPUs:     "4",
-			Memory:   "8g",
+			CPUs:      "4",
+			Memory:    "8g",
 			PidsLimit: 256,
 		},
 		DropAllCaps: true,
@@ -35,7 +35,7 @@ var profiles = map[string]*types.SecurityProfile{
 		Network: types.NetworkConfig{
 			Mode: "host",
 		},
-		Resources: types.ResourceConfig{},
+		Resources:   types.ResourceConfig{},
 		DropAllCaps: false,
 		RunAsUser:   "1000:1000",
 	},

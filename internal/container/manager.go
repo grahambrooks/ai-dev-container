@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/graham/devc/internal/agent"
-	"github.com/graham/devc/internal/config"
-	"github.com/graham/devc/internal/docker"
-	"github.com/graham/devc/internal/session"
-	"github.com/graham/devc/pkg/types"
+	"github.com/grahambrooks/devc/internal/agent"
+	"github.com/grahambrooks/devc/internal/config"
+	"github.com/grahambrooks/devc/internal/docker"
+	"github.com/grahambrooks/devc/internal/session"
+	"github.com/grahambrooks/devc/pkg/types"
 )
 
 // Manager orchestrates container lifecycle operations.

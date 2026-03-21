@@ -1,4 +1,4 @@
-module github.com/graham/devc
+module github.com/grahambrooks/devc
 
 go 1.26.1
 

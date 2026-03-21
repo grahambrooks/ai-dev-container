@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/graham/devc/pkg/types"
+	"github.com/grahambrooks/devc/pkg/types"
 )
 
 func TestContainerName(t *testing.T) {

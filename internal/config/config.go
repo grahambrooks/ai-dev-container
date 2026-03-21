@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/graham/devc/pkg/types"
+	"github.com/grahambrooks/devc/pkg/types"
 )
 
 const (
@@ -154,8 +154,8 @@ func defaultDevcCustomization() *types.DevcCustomization {
 			Mode: "restricted",
 		},
 		Resources: &types.ResourceConfig{
-			CPUs:     "4",
-			Memory:   "8g",
+			CPUs:      "4",
+			Memory:    "8g",
 			PidsLimit: 256,
 		},
 		Filesystem: &types.FilesystemConfig{
