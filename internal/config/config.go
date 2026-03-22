@@ -86,6 +86,9 @@ func ExtractDevcCustomization(cfg *types.DevContainerConfig) (*types.DevcCustomi
 func MergeCustomization(global *types.GlobalConfig, project *types.DevcCustomization) *types.DevcCustomization {
 	merged := global.Defaults
 
+	if len(project.Agents) > 0 {
+		merged.Agents = project.Agents
+	}
 	if project.Agent != "" {
 		merged.Agent = project.Agent
 	}

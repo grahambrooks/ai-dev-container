@@ -40,7 +40,7 @@ func NewManager() (*Manager, error) {
 // UpOptions configures the "up" command.
 type UpOptions struct {
 	WorkspaceFolder string
-	Agent           string
+	Agents          []string // One or more agent profiles (comma-separated at CLI)
 	SecurityProfile string
 	Detach          bool
 	Rebuild         bool // Force rebuild even if container exists
@@ -64,8 +64,9 @@ func (m *Manager) Up(opts UpOptions) error {
 	}
 
 	// CLI overrides
-	if opts.Agent != "" {
-		custom.Agent = opts.Agent
+	if len(opts.Agents) > 0 {
+		custom.Agents = opts.Agents
+		custom.Agent = "" // Agents takes precedence
 	}
 	if opts.SecurityProfile != "" {
 		custom.SecurityProfile = opts.SecurityProfile
@@ -75,13 +76,15 @@ func (m *Manager) Up(opts UpOptions) error {
 
 	containerName := config.ContainerName(opts.WorkspaceFolder)
 
-	// Resolve agent profile
-	var agentProfile *agent.Profile
-	if merged.Agent != "" {
-		agentProfile = agent.GetProfile(merged.Agent)
-		if agentProfile == nil {
-			_, _ = fmt.Fprintf(os.Stderr, "warning: unknown agent %q, skipping agent configuration\n", merged.Agent)
+	// Resolve agent profiles
+	var agentProfiles []*agent.Profile
+	for _, name := range merged.ResolvedAgents() {
+		p := agent.GetProfile(name)
+		if p == nil {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: unknown agent %q, skipping\n", name)
+			continue
 		}
+		agentProfiles = append(agentProfiles, p)
 	}
 
 	// Compute config hash for drift detection
@@ -95,7 +98,7 @@ func (m *Manager) Up(opts UpOptions) error {
 	if !opts.Rebuild && (state == docker.StateRunning || state == docker.StateStopped || state == docker.StateCreated) {
 		storedHash := inspectResult.Labels["devc.config-hash"]
 		if storedHash != "" && storedHash != currentHash {
-			changes := describeChanges(inspectResult.Labels, devCfg, merged, agentProfile)
+			changes := describeChanges(inspectResult.Labels, devCfg, merged, agentProfiles)
 			fmt.Printf("Configuration has changed since this container was created:\n")
 			for _, change := range changes {
 				fmt.Printf("  - %s\n", change)
@@ -130,7 +133,7 @@ func (m *Manager) Up(opts UpOptions) error {
 		}
 
 	case docker.StateNotFound:
-		if err := m.createContainer(containerName, devCfg, merged, opts.WorkspaceFolder, agentProfile, currentHash); err != nil {
+		if err := m.createContainer(containerName, devCfg, merged, opts.WorkspaceFolder, agentProfiles, currentHash); err != nil {
 			return err
 		}
 	}
@@ -152,7 +155,7 @@ func (m *Manager) createContainer(
 	devCfg *types.DevContainerConfig,
 	custom *types.DevcCustomization,
 	workspaceFolder string,
-	agentProfile *agent.Profile,
+	agentProfiles []*agent.Profile,
 	configHash string,
 ) error {
 	// Pull base image if needed
@@ -182,32 +185,32 @@ func (m *Manager) createContainer(
 
 	fmt.Printf("Creating container %s...\n", containerName)
 
-	// Warn if strict (no-network) profile is used with an agent that requires internet access.
-	if secProfile.Network.Mode == "none" && agentProfile != nil && len(agentProfile.NetworkAllow) > 0 {
-		_, _ = fmt.Fprintf(os.Stderr,
-			"warning: security profile %q disables all networking, but agent %q requires internet access (%s)\n",
-			custom.SecurityProfile, agentProfile.Name,
-			strings.Join(agentProfile.NetworkAllow, ", "),
-		)
+	// Warn if strict (no-network) profile is used with agents that require internet access.
+	if secProfile.Network.Mode == "none" {
+		for _, p := range agentProfiles {
+			if len(p.NetworkAllow) > 0 {
+				_, _ = fmt.Fprintf(os.Stderr,
+					"warning: security profile %q disables all networking, but agent %q requires internet access (%s)\n",
+					custom.SecurityProfile, p.Name,
+					strings.Join(p.NetworkAllow, ", "),
+				)
+			}
+		}
 	}
 
-	if err := m.Docker.CreateAndStart(containerName, devCfg, custom, workspaceFolder, agentProfile, configHash); err != nil {
+	if err := m.Docker.CreateAndStart(containerName, devCfg, custom, workspaceFolder, agentProfiles, configHash); err != nil {
 		devCfg.Image = origImage
 		return fmt.Errorf("creating container: %w", err)
 	}
 	devCfg.Image = origImage
 
 	containerHome := m.Docker.ResolveHomeDir(effectiveImage, secProfile.RunAsUser)
+	wsInContainer := config.WorkspaceInContainer(devCfg, workspaceFolder)
 
-	// Copy agent config from host into container (container-local, writable)
-	if agentProfile != nil {
-		m.copyAgentConfig(containerName, agentProfile, containerHome)
-	}
-
-	// Set up agent workspace path mappings (e.g., Claude trust folders)
-	if agentProfile != nil {
-		wsInContainer := config.WorkspaceInContainer(devCfg, workspaceFolder)
-		m.setupAgentPathMappings(containerName, agentProfile, workspaceFolder, wsInContainer, containerHome)
+	// Set up each agent: copy config, path mappings
+	for _, p := range agentProfiles {
+		m.copyAgentConfig(containerName, p, containerHome)
+		m.setupAgentPathMappings(containerName, p, workspaceFolder, wsInContainer, containerHome)
 	}
 
 	// Run lifecycle commands in order
@@ -227,9 +230,9 @@ func (m *Manager) createContainer(
 		}
 	}
 
-	// Ensure agent binary is on PATH by symlinking from ~/.local/bin into /usr/local/bin
-	if agentProfile != nil {
-		m.linkAgentBinary(containerName, agentProfile, containerHome)
+	// Ensure agent binaries are on PATH
+	for _, p := range agentProfiles {
+		m.linkAgentBinary(containerName, p, containerHome)
 	}
 
 	return nil
@@ -560,20 +563,21 @@ func describeChanges(
 	labels map[string]string,
 	devCfg *types.DevContainerConfig,
 	custom *types.DevcCustomization,
-	agentProfile *agent.Profile,
+	agentProfiles []*agent.Profile,
 ) []string {
 	var changes []string
 
+	currentAgents := strings.Join(custom.ResolvedAgents(), ",")
 	if storedAgent := labels["devc.agent"]; storedAgent != "" {
-		if custom.Agent != "" && custom.Agent != storedAgent {
-			changes = append(changes, fmt.Sprintf("agent changed: %s → %s", storedAgent, custom.Agent))
+		if currentAgents != "" && currentAgents != storedAgent {
+			changes = append(changes, fmt.Sprintf("agents changed: %s → %s", storedAgent, currentAgents))
 		}
-	} else if custom.Agent != "" {
-		changes = append(changes, fmt.Sprintf("agent added: %s", custom.Agent))
+	} else if currentAgents != "" {
+		changes = append(changes, fmt.Sprintf("agents added: %s", currentAgents))
 	}
 
-	if agentProfile != nil {
-		changes = append(changes, fmt.Sprintf("agent %s profile may have updated features or install commands", agentProfile.Name))
+	for _, p := range agentProfiles {
+		changes = append(changes, fmt.Sprintf("agent %s profile may have updated install commands", p.Name))
 	}
 
 	// Generic fallback if we can't determine specifics

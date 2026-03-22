@@ -129,30 +129,8 @@ Examples:
 			}
 
 			if agentFlag != "" {
-				p := agent.GetProfile(agentFlag)
-				if p == nil {
-					return fmt.Errorf("unknown agent %q; use 'devc init --list-agents' to see options", agentFlag)
-				}
-
-				custom.Agent = agentFlag
-				fmt.Printf("Agent: %s (%s)\n", agentFlag, p.DisplayName)
-
-				// Set install command as postCreateCommand
-				if p.InstallCmd != "" {
-					devCfg.PostCreateCommand = p.InstallCmd
-				}
-
-				// Add agent's environment variables
-				if len(p.EnvVars) > 0 {
-					if devCfg.ContainerEnv == nil {
-						devCfg.ContainerEnv = make(map[string]string)
-					}
-					for k, v := range p.EnvVars {
-						devCfg.ContainerEnv[k] = v
-					}
-				}
-
-				// Merge network allowlist
+				var agentNames []string
+				var installCmds []string
 				if custom.Network == nil {
 					custom.Network = &types.NetworkConfig{Mode: "restricted"}
 				}
@@ -160,10 +138,49 @@ Examples:
 				for _, d := range custom.Network.Allowlist {
 					existing[d] = true
 				}
-				for _, d := range p.NetworkAllow {
-					if !existing[d] {
-						custom.Network.Allowlist = append(custom.Network.Allowlist, d)
+
+				for _, name := range strings.Split(agentFlag, ",") {
+					name = strings.TrimSpace(name)
+					if name == "" {
+						continue
 					}
+					p := agent.GetProfile(name)
+					if p == nil {
+						return fmt.Errorf("unknown agent %q; use 'devc init --list-agents' to see options", name)
+					}
+					agentNames = append(agentNames, name)
+					fmt.Printf("Agent: %s (%s)\n", name, p.DisplayName)
+
+					if p.InstallCmd != "" {
+						installCmds = append(installCmds, p.InstallCmd)
+					}
+					if len(p.EnvVars) > 0 {
+						if devCfg.ContainerEnv == nil {
+							devCfg.ContainerEnv = make(map[string]string)
+						}
+						for k, v := range p.EnvVars {
+							devCfg.ContainerEnv[k] = v
+						}
+					}
+					for _, d := range p.NetworkAllow {
+						if !existing[d] {
+							existing[d] = true
+							custom.Network.Allowlist = append(custom.Network.Allowlist, d)
+						}
+					}
+				}
+
+				if len(agentNames) == 1 {
+					custom.Agent = agentNames[0]
+					custom.Agents = nil
+				} else {
+					custom.Agents = agentNames
+					custom.Agent = ""
+				}
+				if len(installCmds) == 1 {
+					devCfg.PostCreateCommand = installCmds[0]
+				} else if len(installCmds) > 1 {
+					devCfg.PostCreateCommand = strings.Join(installCmds, " && ")
 				}
 
 				changed = true

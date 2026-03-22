@@ -52,11 +52,18 @@ detection on subsequent `devc up`.
   trigger rebuild.
 - **`pkg/types/types.go`** — All shared types: `DevContainerConfig`, `DevcCustomization`, `SecurityProfile`, etc.
 
+### Multiple Agents
+
+A container can have multiple agents. Use `"agents": ["claude", "copilot"]` in devcontainer.json or
+`--agent claude,copilot` on the CLI. The legacy `"agent": "name"` field still works for a single agent.
+`DevcCustomization.ResolvedAgents()` merges both fields. Network allowlists, env passthrough, credentials,
+config mounts, and install commands are all merged across agents.
+
 ### Container Creation Flow
 
 1. Pull/build image (with devcontainer features if any)
-2. `CreateAndStart()` — set up mounts, env, security, network
-3. `copyAgentConfig()` — `docker cp` host config files into container, `chown 1000:1000`
+2. `CreateAndStart()` — set up mounts, env, security, network (merged across all agent profiles)
+3. `copyAgentConfig()` — `docker cp` host config files into container per agent, `chown 1000:1000`
 4. `setupAgentPathMappings()` — e.g., pre-create Claude trust directory
 5. Lifecycle commands (`onCreateCommand` → `postCreateCommand` → `postStartCommand`) — run as container user, not root
 6. `linkAgentBinary()` — symlink agent binary from `~/.local/bin` into `/usr/local/bin` (as root)

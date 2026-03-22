@@ -15,7 +15,7 @@ import (
 type configSnapshot struct {
 	Image             string                 `json:"image"`
 	Features          map[string]interface{} `json:"features,omitempty"`
-	Agent             string                 `json:"agent,omitempty"`
+	Agents            []string               `json:"agents,omitempty"`
 	SecurityProfile   string                 `json:"securityProfile,omitempty"`
 	PostCreateCommand interface{}            `json:"postCreateCommand,omitempty"`
 	OnCreateCommand   interface{}            `json:"onCreateCommand,omitempty"`
@@ -39,7 +39,7 @@ func ConfigHash(devCfg *types.DevContainerConfig, custom *types.DevcCustomizatio
 	snap := configSnapshot{
 		Image:             devCfg.Image,
 		Features:          devCfg.Features,
-		Agent:             custom.Agent,
+		Agents:            custom.ResolvedAgents(),
 		SecurityProfile:   custom.SecurityProfile,
 		PostCreateCommand: devCfg.PostCreateCommand,
 		OnCreateCommand:   devCfg.OnCreateCommand,
@@ -61,8 +61,8 @@ func ConfigHash(devCfg *types.DevContainerConfig, custom *types.DevcCustomizatio
 	}
 
 	// Include agent mount specs so changes to mount modes trigger rebuild
-	if custom.Agent != "" {
-		if profile := agent.GetProfile(custom.Agent); profile != nil {
+	for _, name := range custom.ResolvedAgents() {
+		if profile := agent.GetProfile(name); profile != nil {
 			for _, m := range profile.ConfigMounts {
 				snap.AgentMounts = append(snap.AgentMounts, mountSnapshot{
 					HostPath: m.HostPath,

@@ -38,7 +38,8 @@ type BuildConfig struct {
 
 // DevcCustomization holds AI safety extensions under customizations.devc.
 type DevcCustomization struct {
-	Agent           string            `json:"agent,omitempty"`
+	Agent           string            `json:"agent,omitempty"`  // Single agent (backward compat)
+	Agents          []string          `json:"agents,omitempty"` // Multiple agents
 	SecurityProfile string            `json:"securityProfile,omitempty"`
 	Network         *NetworkConfig    `json:"network,omitempty"`
 	Resources       *ResourceConfig   `json:"resources,omitempty"`
@@ -46,6 +47,23 @@ type DevcCustomization struct {
 	Session         *SessionConfig    `json:"session,omitempty"`
 	AgentMounts     map[string]string `json:"agentMounts,omitempty"`
 	EnvPassthrough  []string          `json:"envPassthrough,omitempty"` // Host env vars to forward (e.g., API keys)
+}
+
+// ResolvedAgents returns the deduplicated list of agent names from both Agent and Agents fields.
+func (d *DevcCustomization) ResolvedAgents() []string {
+	seen := make(map[string]bool)
+	var result []string
+	// Agents field first, then Agent for backward compat
+	for _, a := range d.Agents {
+		if a != "" && !seen[a] {
+			seen[a] = true
+			result = append(result, a)
+		}
+	}
+	if d.Agent != "" && !seen[d.Agent] {
+		result = append(result, d.Agent)
+	}
+	return result
 }
 
 type NetworkConfig struct {

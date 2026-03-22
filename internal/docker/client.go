@@ -131,7 +131,7 @@ func (c *Client) CreateAndStart(
 	devCfg *types.DevContainerConfig,
 	custom *types.DevcCustomization,
 	workspaceFolder string,
-	agentProfile *agent.Profile,
+	agentProfiles []*agent.Profile,
 	configHash string,
 ) error {
 	ctx := context.Background()
@@ -150,13 +150,13 @@ func (c *Client) CreateAndStart(
 	}
 
 	// Forward host env vars for auth (API keys, tokens)
-	// Collect from both agent profile and devc customization, deduplicating
+	// Collect from all agent profiles and devc customization, deduplicating
 	passthroughSet := make(map[string]bool)
-	if agentProfile != nil {
-		for _, envName := range agentProfile.EnvPassthrough {
+	for _, p := range agentProfiles {
+		for _, envName := range p.EnvPassthrough {
 			passthroughSet[envName] = true
 		}
-		for k, v := range agentProfile.EnvVars {
+		for k, v := range p.EnvVars {
 			env = append(env, k+"="+v)
 		}
 	}
@@ -172,9 +172,16 @@ func (c *Client) CreateAndStart(
 	}
 
 	// Resolve agent credentials from host (Keychain, credential files, etc.)
-	if agentProfile != nil {
-		creds := agent.ResolveCredentials(agentProfile)
-		env = append(env, creds.Env...)
+	credSet := make(map[string]bool) // deduplicate credential env vars
+	for _, p := range agentProfiles {
+		creds := agent.ResolveCredentials(p)
+		for _, e := range creds.Env {
+			key := strings.SplitN(e, "=", 2)[0]
+			if !credSet[key] {
+				credSet[key] = true
+				env = append(env, e)
+			}
+		}
 	}
 
 	labels := map[string]string{
@@ -182,8 +189,12 @@ func (c *Client) CreateAndStart(
 		"devc.workspace":   workspaceFolder,
 		"devc.config-hash": configHash,
 	}
-	if agentProfile != nil {
-		labels["devc.agent"] = agentProfile.Name
+	if len(agentProfiles) > 0 {
+		names := make([]string, len(agentProfiles))
+		for i, p := range agentProfiles {
+			names[i] = p.Name
+		}
+		labels["devc.agent"] = strings.Join(names, ",")
 	}
 
 	// Resolve security profile and effective user early (needed for mount targets)
@@ -221,25 +232,32 @@ func (c *Client) CreateAndStart(
 
 	// Only bind-mount agent config entries that are NOT marked Copy.
 	// Copy entries are handled after container start via docker cp.
-	if agentProfile != nil && home != "" {
-		for _, m := range agentProfile.ConfigMounts {
-			if m.Copy {
-				continue // will be copied into container after start
+	mountedTargets := make(map[string]bool) // deduplicate across profiles
+	if home != "" {
+		for _, p := range agentProfiles {
+			for _, m := range p.ConfigMounts {
+				if m.Copy {
+					continue // will be copied into container after start
+				}
+				src := home + "/" + m.HostPath
+				if _, statErr := os.Stat(src); statErr != nil {
+					continue
+				}
+				dst := m.ContainerPath
+				if dst == "" {
+					dst = containerHome + "/" + m.HostPath
+				}
+				if mountedTargets[dst] {
+					continue
+				}
+				mountedTargets[dst] = true
+				mounts = append(mounts, mount.Mount{
+					Type:     mount.TypeBind,
+					Source:   src,
+					Target:   dst,
+					ReadOnly: m.ReadOnly,
+				})
 			}
-			src := home + "/" + m.HostPath
-			if _, statErr := os.Stat(src); statErr != nil {
-				continue
-			}
-			dst := m.ContainerPath
-			if dst == "" {
-				dst = containerHome + "/" + m.HostPath
-			}
-			mounts = append(mounts, mount.Mount{
-				Type:     mount.TypeBind,
-				Source:   src,
-				Target:   dst,
-				ReadOnly: m.ReadOnly,
-			})
 		}
 	}
 

@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"strings"
+
 	"github.com/grahambrooks/devc/internal/container"
 	"github.com/spf13/cobra"
 )
@@ -22,9 +24,20 @@ func newUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			var agents []string
+			if agentFlag != "" {
+				for _, a := range strings.Split(agentFlag, ",") {
+					a = strings.TrimSpace(a)
+					if a != "" {
+						agents = append(agents, a)
+					}
+				}
+			}
+
 			return mgr.Up(container.UpOptions{
 				WorkspaceFolder: getWorkspaceFolder(args),
-				Agent:           agentFlag,
+				Agents:          agents,
 				SecurityProfile: securityFlag,
 				Detach:          detachFlag,
 				Rebuild:         rebuildFlag,
@@ -32,7 +45,7 @@ func newUpCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&agentFlag, "agent", "", "AI agent profile (claude, codex, gemini, opencode)")
+	cmd.Flags().StringVar(&agentFlag, "agent", "", "AI agent profiles, comma-separated (claude,codex,copilot)")
 	cmd.Flags().StringVar(&securityFlag, "security-profile", "", "security preset (strict, moderate, permissive)")
 	cmd.Flags().BoolVar(&detachFlag, "detach", false, "don't attach after starting")
 	cmd.Flags().BoolVar(&rebuildFlag, "rebuild", false, "force rebuild even if container exists")

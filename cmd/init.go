@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/grahambrooks/devc/internal/agent"
 	"github.com/grahambrooks/devc/internal/config"
@@ -94,24 +95,55 @@ You can also pass a full image reference directly (e.g., --image myregistry/myim
 				"image": imageRef,
 			}
 
-			// Apply agent profile
+			// Apply agent profiles
 			if agentFlag != "" {
-				p := agent.GetProfile(agentFlag)
-				if p == nil {
-					return fmt.Errorf("unknown agent %q; use --list-agents to see options", agentFlag)
+				var agentNames []string
+				var allAllowlist []string
+				var installCmds []string
+				var envPass []string
+				envSeen := make(map[string]bool)
+				allowSeen := make(map[string]bool)
+
+				for _, name := range strings.Split(agentFlag, ",") {
+					name = strings.TrimSpace(name)
+					if name == "" {
+						continue
+					}
+					p := agent.GetProfile(name)
+					if p == nil {
+						return fmt.Errorf("unknown agent %q; use --list-agents to see options", name)
+					}
+					agentNames = append(agentNames, name)
+					for _, d := range p.NetworkAllow {
+						if !allowSeen[d] {
+							allowSeen[d] = true
+							allAllowlist = append(allAllowlist, d)
+						}
+					}
+					if p.InstallCmd != "" {
+						installCmds = append(installCmds, p.InstallCmd)
+					}
+					for _, e := range p.EnvPassthrough {
+						if !envSeen[e] {
+							envSeen[e] = true
+							envPass = append(envPass, e)
+						}
+					}
 				}
 
-				devcConfig["agent"] = agentFlag
-				devcConfig["network"].(map[string]interface{})["allowlist"] = p.NetworkAllow
-
-				// Add install command as postCreateCommand
-				if p.InstallCmd != "" {
-					cfg["postCreateCommand"] = p.InstallCmd
+				if len(agentNames) == 1 {
+					devcConfig["agent"] = agentNames[0]
+				} else {
+					devcConfig["agents"] = agentNames
 				}
-
-				// Add environment variable passthrough for auth
-				if len(p.EnvPassthrough) > 0 {
-					devcConfig["envPassthrough"] = p.EnvPassthrough
+				devcConfig["network"].(map[string]interface{})["allowlist"] = allAllowlist
+				if len(installCmds) == 1 {
+					cfg["postCreateCommand"] = installCmds[0]
+				} else if len(installCmds) > 1 {
+					cfg["postCreateCommand"] = strings.Join(installCmds, " && ")
+				}
+				if len(envPass) > 0 {
+					devcConfig["envPassthrough"] = envPass
 				}
 			}
 
@@ -135,15 +167,18 @@ You can also pass a full image reference directly (e.g., --image myregistry/myim
 			fmt.Printf("Created %s\n", target)
 			fmt.Printf("Image:  %s\n", imageRef)
 			if agentFlag != "" {
-				if p := agent.GetProfile(agentFlag); p != nil {
-					fmt.Printf("Agent:  %s (%s)\n", agentFlag, p.DisplayName)
+				for _, name := range strings.Split(agentFlag, ",") {
+					name = strings.TrimSpace(name)
+					if p := agent.GetProfile(name); p != nil {
+						fmt.Printf("Agent:  %s (%s)\n", name, p.DisplayName)
+					}
 				}
 			}
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&agentFlag, "agent", "", "pre-configure for AI agent (use --list-agents to see options)")
+	cmd.Flags().StringVar(&agentFlag, "agent", "", "pre-configure AI agents, comma-separated (use --list-agents to see options)")
 	cmd.Flags().StringVar(&imageFlag, "image", "", "base image name or full reference (use --list-images to see options)")
 	cmd.Flags().BoolVar(&listImages, "list-images", false, "list available base images")
 	cmd.Flags().BoolVar(&listAgents, "list-agents", false, "list available AI agent profiles")
