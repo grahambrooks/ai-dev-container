@@ -10,6 +10,7 @@ func newUpCmd() *cobra.Command {
 		agentFlag    string
 		securityFlag string
 		detachFlag   bool
+		rebuildFlag  bool
 	)
 
 	cmd := &cobra.Command{
@@ -26,6 +27,7 @@ func newUpCmd() *cobra.Command {
 				Agent:           agentFlag,
 				SecurityProfile: securityFlag,
 				Detach:          detachFlag,
+				Rebuild:         rebuildFlag,
 			})
 		},
 	}
@@ -33,6 +35,7 @@ func newUpCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agentFlag, "agent", "", "AI agent profile (claude, codex, gemini, opencode)")
 	cmd.Flags().StringVar(&securityFlag, "security-profile", "", "security preset (strict, moderate, permissive)")
 	cmd.Flags().BoolVar(&detachFlag, "detach", false, "don't attach after starting")
+	cmd.Flags().BoolVar(&rebuildFlag, "rebuild", false, "force rebuild even if container exists")
 
 	return cmd
 }

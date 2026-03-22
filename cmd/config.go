@@ -137,19 +137,9 @@ Examples:
 				custom.Agent = agentFlag
 				fmt.Printf("Agent: %s (%s)\n", agentFlag, p.DisplayName)
 
-				// Add agent's required features
-				if devCfg.Features == nil {
-					devCfg.Features = make(map[string]interface{})
-				}
-				for ref, opts := range p.DevcontainerFeatures() {
-					devCfg.Features[ref] = opts
-					fmt.Printf("Feature: %s\n", ref)
-				}
-
 				// Set install command as postCreateCommand
 				if p.InstallCmd != "" {
 					devCfg.PostCreateCommand = p.InstallCmd
-					fmt.Printf("Install: %s\n", p.InstallCmd)
 				}
 
 				// Add agent's environment variables

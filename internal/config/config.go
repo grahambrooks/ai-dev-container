@@ -107,6 +107,9 @@ func MergeCustomization(global *types.GlobalConfig, project *types.DevcCustomiza
 	if project.AgentMounts != nil {
 		merged.AgentMounts = project.AgentMounts
 	}
+	if len(project.EnvPassthrough) > 0 {
+		merged.EnvPassthrough = project.EnvPassthrough
+	}
 
 	return &merged
 }

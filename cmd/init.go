@@ -27,9 +27,9 @@ func newInitCmd() *cobra.Command {
 Use --image to select a base image by name, or --list-images to see
 all available images. If --image is not specified, defaults to "base" (Ubuntu).
 
-Use --agent to pre-configure an AI coding agent. This adds the required
-features (e.g., Node.js for npm-based agents), install commands, network
-allowlist entries, and environment variables. Use --list-agents to see options.
+Use --agent to pre-configure an AI coding agent. This adds the agent's
+binary install command, network allowlist entries, and environment
+variables. Use --list-agents to see options.
 
 You can also pass a full image reference directly (e.g., --image myregistry/myimage:tag).`,
 		Args: cobra.MaximumNArgs(1),
@@ -104,20 +104,14 @@ You can also pass a full image reference directly (e.g., --image myregistry/myim
 				devcConfig["agent"] = agentFlag
 				devcConfig["network"].(map[string]interface{})["allowlist"] = p.NetworkAllow
 
-				// Add required features
-				features := p.DevcontainerFeatures()
-				if len(features) > 0 {
-					cfg["features"] = features
-				}
-
 				// Add install command as postCreateCommand
 				if p.InstallCmd != "" {
 					cfg["postCreateCommand"] = p.InstallCmd
 				}
 
-				// Add environment variables
-				if len(p.EnvVars) > 0 {
-					cfg["containerEnv"] = p.EnvVars
+				// Add environment variable passthrough for auth
+				if len(p.EnvPassthrough) > 0 {
+					devcConfig["envPassthrough"] = p.EnvPassthrough
 				}
 			}
 
@@ -143,12 +137,6 @@ You can also pass a full image reference directly (e.g., --image myregistry/myim
 			if agentFlag != "" {
 				if p := agent.GetProfile(agentFlag); p != nil {
 					fmt.Printf("Agent:  %s (%s)\n", agentFlag, p.DisplayName)
-					if p.InstallCmd != "" {
-						fmt.Printf("Install: %s\n", p.InstallCmd)
-					}
-					for ref := range p.Features {
-						fmt.Printf("Feature: %s\n", ref)
-					}
 				}
 			}
 			return nil

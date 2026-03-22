@@ -73,22 +73,35 @@ const (
 	StateCreated  ContainerState = "created"
 )
 
-// Inspect returns the state of a container by name.
-func (c *Client) Inspect(name string) ContainerState {
+// ContainerInspectResult holds the state and labels of an inspected container.
+type ContainerInspectResult struct {
+	State  ContainerState
+	Labels map[string]string
+}
+
+// Inspect returns the state and metadata of a container by name.
+func (c *Client) Inspect(name string) ContainerInspectResult {
 	ctx := context.Background()
 	result, err := c.api.ContainerInspect(ctx, name, dockerclient.ContainerInspectOptions{})
 	if err != nil {
-		return StateNotFound
+		return ContainerInspectResult{State: StateNotFound}
 	}
+
+	var state ContainerState
 	switch result.Container.State.Status {
 	case "running":
-		return StateRunning
+		state = StateRunning
 	case "exited", "dead":
-		return StateStopped
+		state = StateStopped
 	case "created":
-		return StateCreated
+		state = StateCreated
 	default:
-		return StateStopped
+		state = StateStopped
+	}
+
+	return ContainerInspectResult{
+		State:  state,
+		Labels: result.Container.Config.Labels,
 	}
 }
 
@@ -119,6 +132,7 @@ func (c *Client) CreateAndStart(
 	custom *types.DevcCustomization,
 	workspaceFolder string,
 	agentProfile *agent.Profile,
+	configHash string,
 ) error {
 	ctx := context.Background()
 
@@ -135,13 +149,46 @@ func (c *Client) CreateAndStart(
 		env = append(env, k+"="+v)
 	}
 
+	// Forward host env vars for auth (API keys, tokens)
+	// Collect from both agent profile and devc customization, deduplicating
+	passthroughSet := make(map[string]bool)
+	if agentProfile != nil {
+		for _, envName := range agentProfile.EnvPassthrough {
+			passthroughSet[envName] = true
+		}
+		for k, v := range agentProfile.EnvVars {
+			env = append(env, k+"="+v)
+		}
+	}
+	if custom.EnvPassthrough != nil {
+		for _, envName := range custom.EnvPassthrough {
+			passthroughSet[envName] = true
+		}
+	}
+	for envName := range passthroughSet {
+		if val, ok := os.LookupEnv(envName); ok {
+			env = append(env, envName+"="+val)
+		}
+	}
+
+	// Resolve agent credentials from host (Keychain, credential files, etc.)
+	if agentProfile != nil {
+		creds := agent.ResolveCredentials(agentProfile)
+		env = append(env, creds.Env...)
+	}
+
 	labels := map[string]string{
-		"devc.managed":   "true",
-		"devc.workspace": workspaceFolder,
+		"devc.managed":     "true",
+		"devc.workspace":   workspaceFolder,
+		"devc.config-hash": configHash,
 	}
 	if agentProfile != nil {
 		labels["devc.agent"] = agentProfile.Name
 	}
+
+	// Resolve security profile and effective user early (needed for mount targets)
+	profile := security.GetProfile(custom.SecurityProfile)
+	effectiveUser := profile.RunAsUser
 
 	containerCfg := &container.Config{
 		Image:      devCfg.Image,
@@ -149,6 +196,7 @@ func (c *Client) CreateAndStart(
 		Env:        env,
 		Labels:     labels,
 		WorkingDir: wsTarget,
+		User:       effectiveUser,
 	}
 
 	// Build host config
@@ -167,25 +215,87 @@ func (c *Client) CreateAndStart(
 		},
 	}
 
-	// Agent config mounts
-	if agentProfile != nil {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			for _, dir := range agentProfile.ConfigDirs {
-				src := home + "/" + dir
-				dst := "/home/dev/" + dir
+	// Agent config and auth mounts — target the container user's actual home
+	home, _ := os.UserHomeDir()
+	containerHome := containerHomeDir(ctx, c.api, devCfg.Image, effectiveUser)
+
+	if agentProfile != nil && home != "" {
+		for _, m := range agentProfile.ConfigMounts {
+			src := home + "/" + m.HostPath
+			// Skip mounts where the source doesn't exist on the host
+			if _, statErr := os.Stat(src); statErr != nil {
+				continue
+			}
+			dst := m.ContainerPath
+			if dst == "" {
+				dst = containerHome + "/" + m.HostPath
+			}
+
+			if m.Seed {
+				// Seed mount: create a named volume at the target path,
+				// bind-mount host dir read-only to a temp seed location
+				volName := agent.SeedVolumeName(containerName, m.HostPath)
+				if err := c.CreateVolume(volName, map[string]string{
+					"devc.managed":   "true",
+					"devc.container": containerName,
+					"devc.seed-path": m.HostPath,
+				}); err != nil {
+					return fmt.Errorf("creating seed volume %s: %w", volName, err)
+				}
+				// Volume mount at target (writable)
+				mounts = append(mounts, mount.Mount{
+					Type:   mount.TypeVolume,
+					Source: volName,
+					Target: dst,
+				})
+				// Bind mount host content to temp seed location (read-only)
+				mounts = append(mounts, mount.Mount{
+					Type:     mount.TypeBind,
+					Source:   src,
+					Target:   agent.SeedPath(m.HostPath),
+					ReadOnly: true,
+				})
+			} else {
 				mounts = append(mounts, mount.Mount{
 					Type:     mount.TypeBind,
 					Source:   src,
 					Target:   dst,
-					ReadOnly: true,
+					ReadOnly: m.ReadOnly,
 				})
 			}
 		}
 	}
 
-	// Security profile
-	profile := security.GetProfile(custom.SecurityProfile)
+	// Common auth mounts (SSH keys, git config) — always read-only
+	if home != "" {
+		for _, m := range agent.CommonAuthMounts() {
+			src := home + "/" + m.HostPath
+			if _, statErr := os.Stat(src); statErr != nil {
+				continue
+			}
+			dst := containerHome + "/" + m.HostPath
+			mounts = append(mounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   src,
+				Target:   dst,
+				ReadOnly: true,
+			})
+		}
+	}
+
+	// SSH agent socket forwarding
+	if hostSock, containerSock := agent.SSHAuthSockMount(); hostSock != "" {
+		if _, statErr := os.Stat(hostSock); statErr == nil {
+			mounts = append(mounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   hostSock,
+				Target:   containerSock,
+				ReadOnly: true,
+			})
+			env = append(env, "SSH_AUTH_SOCK="+containerSock)
+		}
+	}
+
 	hostCfg := &container.HostConfig{
 		Mounts:      mounts,
 		SecurityOpt: []string{"no-new-privileges"},
@@ -236,11 +346,6 @@ func (c *Client) CreateAndStart(
 		hostCfg.NetworkMode = "host"
 	default:
 		hostCfg.NetworkMode = "bridge"
-	}
-
-	// User
-	if profile.RunAsUser != "" {
-		containerCfg.User = profile.RunAsUser
 	}
 
 	// Create container
@@ -464,6 +569,36 @@ func (c *Client) BuildImageWithFeatures(
 	return tag, nil
 }
 
+// CreateVolume creates a named Docker volume with the given labels. Idempotent.
+func (c *Client) CreateVolume(name string, labels map[string]string) error {
+	ctx := context.Background()
+	_, err := c.api.VolumeCreate(ctx, dockerclient.VolumeCreateOptions{
+		Name:   name,
+		Labels: labels,
+	})
+	return err
+}
+
+// RemoveContainerVolumes removes all seed volumes associated with a container.
+func (c *Client) RemoveContainerVolumes(containerName string) error {
+	ctx := context.Background()
+
+	f := make(dockerclient.Filters)
+	f.Add("label", "devc.container="+containerName)
+
+	result, err := c.api.VolumeList(ctx, dockerclient.VolumeListOptions{Filters: f})
+	if err != nil {
+		return fmt.Errorf("listing volumes: %w", err)
+	}
+
+	for _, v := range result.Items {
+		if _, removeErr := c.api.VolumeRemove(ctx, v.Name, dockerclient.VolumeRemoveOptions{Force: true}); removeErr != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: could not remove volume %s: %v\n", v.Name, removeErr)
+		}
+	}
+	return nil
+}
+
 func parseMemoryString(s string) int64 {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -488,4 +623,35 @@ func parseMemoryString(s string) int64 {
 		return 0
 	}
 	return val * multiplier
+}
+
+// containerHomeDir determines the home directory for the effective user inside
+// the container image. It inspects the image to find the configured user,
+// then maps common devcontainer users to their home directories.
+func containerHomeDir(ctx context.Context, api *dockerclient.Client, imageName string, overrideUser string) string {
+	user := overrideUser
+
+	// If no user override, check image config
+	if user == "" {
+		result, err := api.ImageInspect(ctx, imageName)
+		if err == nil && result.Config != nil {
+			user = result.Config.User
+		}
+	}
+
+	// Extract username from uid:gid format
+	if idx := strings.Index(user, ":"); idx != -1 {
+		user = user[:idx]
+	}
+
+	switch user {
+	case "", "root", "0":
+		return "/root"
+	case "vscode", "1000":
+		return "/home/vscode"
+	case "node":
+		return "/home/node"
+	default:
+		return "/home/" + user
+	}
 }
