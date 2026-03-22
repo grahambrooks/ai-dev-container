@@ -36,7 +36,7 @@ var knownProfiles = map[string]*Profile{
 		Binary:      "claude",
 		ConfigMounts: []MountSpec{
 			{HostPath: ".claude/settings.json", Copy: true}, // User settings
-			{HostPath: ".claude.json", ReadOnly: true},      // Global settings
+			{HostPath: ".claude.json", Copy: true},          // Global settings — copied so workspace auth writes succeed
 		},
 		NetworkAllow: []string{
 			"api.anthropic.com",
@@ -97,8 +97,8 @@ var knownProfiles = map[string]*Profile{
 		DisplayName: "Gemini CLI",
 		Binary:      "gemini",
 		ConfigMounts: []MountSpec{
-			{HostPath: ".gemini", Copy: true},            // Gemini config and auth — seeded from host
-			{HostPath: ".config/gcloud", ReadOnly: true}, // GCP credentials for ADC auth
+			{HostPath: ".gemini", Copy: true},        // Gemini config and auth — seeded from host
+			{HostPath: ".config/gcloud", Copy: true}, // GCP credentials for ADC auth — copied so token refresh can write back
 		},
 		NetworkAllow: []string{
 			"generativelanguage.googleapis.com",
@@ -120,8 +120,8 @@ var knownProfiles = map[string]*Profile{
 		DisplayName: "Aider",
 		Binary:      "aider",
 		ConfigMounts: []MountSpec{
-			{HostPath: ".aider.conf.yml", ReadOnly: true}, // Aider config
-			{HostPath: ".aider", ReadOnly: true},          // Aider data
+			{HostPath: ".aider.conf.yml", Copy: true}, // Aider config — copied so aider can update it
+			{HostPath: ".aider", Copy: true},          // Aider data — copied so chat history and session state can be written
 		},
 		NetworkAllow: []string{
 			"api.anthropic.com",
@@ -215,7 +215,13 @@ func CommonAuthMounts() []MountSpec {
 }
 
 // SSHAuthSockMount returns the host and container socket paths for SSH agent forwarding.
-// Returns empty strings if SSH_AUTH_SOCK is not set.
+// Returns empty containerSocket if SSH_AUTH_SOCK is not set on the host.
+//
+// On macOS, Docker Desktop automatically injects the SSH agent socket into every
+// container at /run/host-services/ssh-auth.sock — no bind mount is required.
+// hostSocket is empty in this case; callers should only set the env var.
+//
+// On Linux, the host socket is bind-mounted into the container at a fixed path.
 func SSHAuthSockMount() (hostSocket, containerSocket string) {
 	sock := os.Getenv("SSH_AUTH_SOCK")
 	if sock == "" {
@@ -223,9 +229,9 @@ func SSHAuthSockMount() (hostSocket, containerSocket string) {
 	}
 
 	if runtime.GOOS == "darwin" {
-		// Docker Desktop for Mac provides a forwarding socket
-		return "/run/host-services/ssh-auth.sock", "/run/host-services/ssh-auth.sock"
+		// Docker Desktop injects the agent socket automatically; skip the bind mount.
+		return "", "/run/host-services/ssh-auth.sock"
 	}
-	// Linux: bind the actual socket
+	// Linux: bind the actual socket into the container.
 	return sock, "/tmp/ssh-auth.sock"
 }

@@ -2,6 +2,7 @@ package container
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -176,15 +177,26 @@ func (m *Manager) createContainer(
 	origImage := devCfg.Image
 	devCfg.Image = effectiveImage
 
+	// Resolve security profile early — needed for home dir and pre-create warnings.
+	secProfile := security.GetProfile(custom.SecurityProfile)
+
 	fmt.Printf("Creating container %s...\n", containerName)
+
+	// Warn if strict (no-network) profile is used with an agent that requires internet access.
+	if secProfile.Network.Mode == "none" && agentProfile != nil && len(agentProfile.NetworkAllow) > 0 {
+		_, _ = fmt.Fprintf(os.Stderr,
+			"warning: security profile %q disables all networking, but agent %q requires internet access (%s)\n",
+			custom.SecurityProfile, agentProfile.Name,
+			strings.Join(agentProfile.NetworkAllow, ", "),
+		)
+	}
+
 	if err := m.Docker.CreateAndStart(containerName, devCfg, custom, workspaceFolder, agentProfile, configHash); err != nil {
 		devCfg.Image = origImage
 		return fmt.Errorf("creating container: %w", err)
 	}
 	devCfg.Image = origImage
 
-	// Resolve container user's home directory for agent setup
-	secProfile := security.GetProfile(custom.SecurityProfile)
 	containerHome := m.Docker.ResolveHomeDir(effectiveImage, secProfile.RunAsUser)
 
 	// Copy agent config from host into container (container-local, writable)
@@ -195,7 +207,7 @@ func (m *Manager) createContainer(
 	// Set up agent workspace path mappings (e.g., Claude trust folders)
 	if agentProfile != nil {
 		wsInContainer := config.WorkspaceInContainer(devCfg, workspaceFolder)
-		m.setupAgentPathMappings(containerName, agentProfile, workspaceFolder, wsInContainer)
+		m.setupAgentPathMappings(containerName, agentProfile, workspaceFolder, wsInContainer, containerHome)
 	}
 
 	// Run lifecycle commands in order
@@ -217,7 +229,7 @@ func (m *Manager) createContainer(
 
 	// Ensure agent binary is on PATH by symlinking from ~/.local/bin into /usr/local/bin
 	if agentProfile != nil {
-		m.linkAgentBinary(containerName, agentProfile)
+		m.linkAgentBinary(containerName, agentProfile, containerHome)
 	}
 
 	return nil
@@ -353,13 +365,18 @@ func (m *Manager) Clean(dryRun bool) ([]string, error) {
 }
 
 // linkAgentBinary ensures the agent's binary is on the system PATH by symlinking
-// from the user-local install location (~/.local/bin) into /usr/local/bin.
-func (m *Manager) linkAgentBinary(containerName string, profile *agent.Profile) {
-	// Check common user-local install locations and symlink to /usr/local/bin
+// from the user-local install location into /usr/local/bin.
+// containerHome must be the container user's home directory (e.g. /home/vscode),
+// not root's home. The symlink creation runs as root, so ~ must not be used here
+// as it would resolve to /root instead of the container user's home.
+func (m *Manager) linkAgentBinary(containerName string, profile *agent.Profile, containerHome string) {
+	// Check common user-local install locations and symlink to /usr/local/bin.
+	// Use explicit containerHome rather than ~ because this runs as root.
 	cmd := fmt.Sprintf(
-		`for dir in ~/.local/bin ~/bin ~/.claude/bin; do `+
+		`for dir in %s/.local/bin %s/bin %s/.claude/bin; do `+
 			`if [ -x "$dir/%s" ]; then ln -sf "$dir/%s" /usr/local/bin/%s 2>/dev/null && break; fi; `+
 			`done; true`,
+		containerHome, containerHome, containerHome,
 		profile.Binary, profile.Binary, profile.Binary,
 	)
 	if err := m.Docker.ExecAs(containerName, []string{"sh", "-c", cmd}, docker.ExecOptions{User: "root"}); err != nil {
@@ -437,34 +454,94 @@ func (m *Manager) runLifecycleCommand(containerName string, cmd interface{}, nam
 	}
 }
 
-// setupAgentPathMappings creates symlinks inside the container so agent trust/config
+// setupAgentPathMappings creates path mappings inside the container so agent trust/config
 // that was established on the host (with host paths) also works for container paths.
 //
-// For example, Claude Code stores per-project trust in ~/.claude/projects/ keyed by
-// the absolute workspace path. On the host this is /Users/graham/dev/myproject but
-// in the container it's /workspaces/myproject. This method symlinks the container
-// path entry to the host path entry so trust carries over.
-func (m *Manager) setupAgentPathMappings(containerName string, profile *agent.Profile, hostWorkspace, containerWorkspace string) {
+// For example, Claude Code stores per-project trust in ~/.claude.json under the "projects"
+// key, keyed by the absolute workspace path. On the host this is /Users/graham/dev/myproject
+// but in the container it's /workspaces/myproject. This method pre-registers the container
+// path so Claude doesn't prompt for workspace authorization on every run.
+func (m *Manager) setupAgentPathMappings(containerName string, profile *agent.Profile, hostWorkspace, containerWorkspace, containerHome string) {
 	switch profile.Name {
 	case "claude":
-		m.setupClaudePathMapping(containerName, hostWorkspace, containerWorkspace)
+		m.setupClaudePathMapping(containerName, hostWorkspace, containerWorkspace, containerHome)
 	}
 }
 
-func (m *Manager) setupClaudePathMapping(containerName, hostWorkspace, containerWorkspace string) {
+func (m *Manager) setupClaudePathMapping(containerName, hostWorkspace, containerWorkspace, containerHome string) {
 	containerKey := claudeProjectKey(containerWorkspace)
 
-	// Pre-create the project directory so Claude recognizes the workspace as trusted
-	// and doesn't prompt the user on first run
+	// Pre-create the session history directory so Claude can store transcripts.
 	cmd := fmt.Sprintf(
 		`home=$(eval echo ~) && `+
 			`mkdir -p "$home/.claude/projects/%s"`,
 		containerKey,
 	)
-
 	if err := m.Docker.ExecAs(containerName, []string{"sh", "-c", cmd}, docker.ExecOptions{}); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "warning: could not set up Claude project trust: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "warning: could not set up Claude session directory: %v\n", err)
 	}
+
+	// Patch ~/.claude.json in the container to mark the workspace as trusted so
+	// Claude doesn't prompt for authorization on every run.
+	hostHome, _ := os.UserHomeDir()
+	modified, err := patchClaudeGlobalConfig(filepath.Join(hostHome, ".claude.json"), containerWorkspace)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "warning: could not generate Claude global config: %v\n", err)
+		return
+	}
+
+	// Write to a temp file named .claude.json, then docker cp it into the container.
+	tmpDir, err := os.MkdirTemp("", "devc-claude-")
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "warning: could not create temp dir for Claude config: %v\n", err)
+		return
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tmpFile := filepath.Join(tmpDir, ".claude.json")
+	if err := os.WriteFile(tmpFile, modified, 0644); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "warning: could not write temp Claude config: %v\n", err)
+		return
+	}
+	if err := m.Docker.CopyInto(containerName, tmpFile, containerHome); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "warning: could not copy Claude config into container: %v\n", err)
+		return
+	}
+
+	chown := fmt.Sprintf("chown 1000:1000 %s/.claude.json 2>/dev/null; true", containerHome)
+	_ = m.Docker.ExecAs(containerName, []string{"sh", "-c", chown}, docker.ExecOptions{User: "root"})
+}
+
+// patchClaudeGlobalConfig reads the host ~/.claude.json (or starts with an empty config),
+// ensures the container workspace path is present under "projects" with hasTrustDialogAccepted
+// set to true, and returns the modified JSON. All other fields are preserved.
+func patchClaudeGlobalConfig(hostConfigPath, containerWorkspace string) ([]byte, error) {
+	var cfg map[string]interface{}
+
+	if data, err := os.ReadFile(hostConfigPath); err == nil {
+		if jsonErr := json.Unmarshal(data, &cfg); jsonErr != nil {
+			cfg = make(map[string]interface{})
+		}
+	} else {
+		cfg = make(map[string]interface{})
+	}
+
+	projects, _ := cfg["projects"].(map[string]interface{})
+	if projects == nil {
+		projects = make(map[string]interface{})
+	}
+
+	if _, exists := projects[containerWorkspace]; !exists {
+		projects[containerWorkspace] = map[string]interface{}{
+			"allowedTools":           []interface{}{},
+			"mcpContextUris":         []interface{}{},
+			"mcpServers":             map[string]interface{}{},
+			"hasTrustDialogAccepted": true,
+		}
+	}
+
+	cfg["projects"] = projects
+	return json.MarshalIndent(cfg, "", "  ")
 }
 
 // claudeProjectKey converts an absolute path to the key Claude uses for

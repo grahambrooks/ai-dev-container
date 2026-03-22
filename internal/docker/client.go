@@ -260,17 +260,21 @@ func (c *Client) CreateAndStart(
 		}
 	}
 
-	// SSH agent socket forwarding
-	if hostSock, containerSock := agent.SSHAuthSockMount(); hostSock != "" {
-		if _, statErr := os.Stat(hostSock); statErr == nil {
-			mounts = append(mounts, mount.Mount{
-				Type:     mount.TypeBind,
-				Source:   hostSock,
-				Target:   containerSock,
-				ReadOnly: true,
-			})
-			env = append(env, "SSH_AUTH_SOCK="+containerSock)
+	// SSH agent socket forwarding.
+	// On macOS, Docker Desktop provides the socket automatically; we only set the env var.
+	// On Linux, we bind-mount the host socket into the container.
+	if hostSock, containerSock := agent.SSHAuthSockMount(); containerSock != "" {
+		if hostSock != "" {
+			if _, statErr := os.Stat(hostSock); statErr == nil {
+				mounts = append(mounts, mount.Mount{
+					Type:     mount.TypeBind,
+					Source:   hostSock,
+					Target:   containerSock,
+					ReadOnly: true,
+				})
+			}
 		}
+		env = append(env, "SSH_AUTH_SOCK="+containerSock)
 	}
 
 	hostCfg := &container.HostConfig{
