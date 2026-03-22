@@ -217,7 +217,7 @@ func (c *Client) CreateAndStart(
 
 	// Agent config and auth mounts — target the container user's actual home
 	home, _ := os.UserHomeDir()
-	containerHome := containerHomeDir(ctx, c.api, devCfg.Image, effectiveUser)
+	containerHome := ContainerHomeDir(ctx, c.api, devCfg.Image, effectiveUser)
 
 	if agentProfile != nil && home != "" {
 		for _, m := range agentProfile.ConfigMounts {
@@ -599,6 +599,11 @@ func (c *Client) RemoveContainerVolumes(containerName string) error {
 	return nil
 }
 
+// ResolveHomeDir returns the home directory for the given user in the given image.
+func (c *Client) ResolveHomeDir(imageName, user string) string {
+	return ContainerHomeDir(context.Background(), c.api, imageName, user)
+}
+
 func parseMemoryString(s string) int64 {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -625,10 +630,10 @@ func parseMemoryString(s string) int64 {
 	return val * multiplier
 }
 
-// containerHomeDir determines the home directory for the effective user inside
+// ContainerHomeDir determines the home directory for the effective user inside
 // the container image. It inspects the image to find the configured user,
 // then maps common devcontainer users to their home directories.
-func containerHomeDir(ctx context.Context, api *dockerclient.Client, imageName string, overrideUser string) string {
+func ContainerHomeDir(ctx context.Context, api *dockerclient.Client, imageName string, overrideUser string) string {
 	user := overrideUser
 
 	// If no user override, check image config

@@ -14,6 +14,7 @@ var profiles = map[string]*types.SecurityProfile{
 			PidsLimit: 128,
 		},
 		DropAllCaps: true,
+		AddCaps:     []string{"CHOWN", "DAC_OVERRIDE", "FOWNER"},
 		RunAsUser:   "1000:1000",
 	},
 	"moderate": {
@@ -27,7 +28,7 @@ var profiles = map[string]*types.SecurityProfile{
 			PidsLimit: 256,
 		},
 		DropAllCaps: true,
-		AddCaps:     []string{"NET_BIND_SERVICE"},
+		AddCaps:     []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "NET_BIND_SERVICE"},
 		RunAsUser:   "1000:1000",
 	},
 	"permissive": {

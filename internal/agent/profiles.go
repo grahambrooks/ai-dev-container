@@ -43,11 +43,10 @@ var knownProfiles = map[string]*Profile{
 			"api.anthropic.com",
 			"statsig.anthropic.com",
 			"sentry.io",
-			"cli.anthropic.com",
+			"claude.ai",
 		},
 		InstallCmd: `set -e && ` +
-			`curl -fsSL https://cli.anthropic.com/install.sh | sh && ` +
-			`ln -sf ~/.claude/bin/claude /usr/local/bin/claude`,
+			`curl -fsSL https://claude.ai/install.sh | bash`,
 		EnvVars:        map[string]string{},
 		EnvPassthrough: []string{"ANTHROPIC_API_KEY"},
 	},

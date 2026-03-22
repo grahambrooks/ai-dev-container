@@ -10,6 +10,7 @@ import (
 	"github.com/grahambrooks/devc/internal/agent"
 	"github.com/grahambrooks/devc/internal/config"
 	"github.com/grahambrooks/devc/internal/docker"
+	"github.com/grahambrooks/devc/internal/security"
 	"github.com/grahambrooks/devc/internal/session"
 	"github.com/grahambrooks/devc/pkg/types"
 )
@@ -107,11 +108,14 @@ func (m *Manager) Up(opts UpOptions) error {
 		}
 	}
 
-	// Rebuild: remove existing container first
+	// Rebuild: remove existing container and its seed volumes
 	if opts.Rebuild && state != docker.StateNotFound {
 		fmt.Printf("Removing existing container %s...\n", containerName)
 		if err := m.Docker.Remove(containerName, true); err != nil {
 			return fmt.Errorf("removing container for rebuild: %w", err)
+		}
+		if err := m.Docker.RemoveContainerVolumes(containerName); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: could not clean up seed volumes: %v\n", err)
 		}
 		m.Session.Clean(containerName)
 		state = docker.StateNotFound
@@ -182,9 +186,13 @@ func (m *Manager) createContainer(
 	}
 	devCfg.Image = origImage
 
+	// Resolve container user's home directory for agent setup
+	secProfile := security.GetProfile(custom.SecurityProfile)
+	containerHome := m.Docker.ResolveHomeDir(effectiveImage, secProfile.RunAsUser)
+
 	// Seed container-local volumes from host content
 	if agentProfile != nil {
-		m.seedAgentVolumes(containerName, agentProfile)
+		m.seedAgentVolumes(containerName, agentProfile, containerHome)
 	}
 
 	// Set up agent workspace path mappings (e.g., Claude trust folders)
@@ -208,6 +216,11 @@ func (m *Manager) createContainer(
 		if lcErr := m.runLifecycleCommand(containerName, devCfg.PostStartCommand, "postStartCommand"); lcErr != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "warning: postStartCommand failed: %v\n", lcErr)
 		}
+	}
+
+	// Ensure agent binary is on PATH by symlinking from ~/.local/bin into /usr/local/bin
+	if agentProfile != nil {
+		m.linkAgentBinary(containerName, agentProfile)
 	}
 
 	return nil
@@ -347,35 +360,58 @@ func (m *Manager) Clean(dryRun bool) ([]string, error) {
 	return removed, nil
 }
 
-// seedAgentVolumes copies host content from temporary seed bind mounts into the
-// corresponding named volumes. This runs once on first container creation.
-func (m *Manager) seedAgentVolumes(containerName string, profile *agent.Profile) {
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return
+// linkAgentBinary ensures the agent's binary is on the system PATH by symlinking
+// from the user-local install location (~/.local/bin) into /usr/local/bin.
+func (m *Manager) linkAgentBinary(containerName string, profile *agent.Profile) {
+	// Check common user-local install locations and symlink to /usr/local/bin
+	cmd := fmt.Sprintf(
+		`for dir in ~/.local/bin ~/bin ~/.claude/bin; do `+
+			`if [ -x "$dir/%s" ]; then ln -sf "$dir/%s" /usr/local/bin/%s 2>/dev/null && break; fi; `+
+			`done; true`,
+		profile.Binary, profile.Binary, profile.Binary,
+	)
+	if err := m.Docker.ExecAs(containerName, []string{"sh", "-c", cmd}, docker.ExecOptions{User: "root"}); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "warning: could not link %s to PATH: %v\n", profile.Binary, err)
 	}
+}
+
+// seedAgentVolumes initializes seed volume mount points with correct ownership
+// and copies host content from temporary seed bind mounts. Runs once on first
+// container creation.
+func (m *Manager) seedAgentVolumes(containerName string, profile *agent.Profile, containerHome string) {
+	home, _ := os.UserHomeDir()
+
 	for _, mt := range profile.ConfigMounts {
 		if !mt.Seed {
 			continue
 		}
-		src := home + "/" + mt.HostPath
-		if _, err := os.Stat(src); err != nil {
-			continue
-		}
-		seedSrc := agent.SeedPath(mt.HostPath)
-		// Determine target in container (mirrors logic in docker client)
+
 		dst := mt.ContainerPath
 		if dst == "" {
-			// We don't know containerHome here easily, so use the seed volume
-			// mount target which is the same path the volume was mounted at.
-			// The volume is mounted at containerHome + "/" + mt.HostPath.
-			// We'll use a shell expression to resolve it.
-			dst = fmt.Sprintf("$(eval echo ~)/%s", mt.HostPath)
+			dst = containerHome + "/" + mt.HostPath
 		}
-		cmd := fmt.Sprintf(
-			`cp -a %s/. %s/ 2>/dev/null; chown -R 1000:1000 %s 2>/dev/null; true`,
-			seedSrc, dst, dst,
-		)
+
+		// Check if host content is available to seed
+		hasSeed := false
+		if home != "" {
+			if _, err := os.Stat(home + "/" + mt.HostPath); err == nil {
+				hasSeed = true
+			}
+		}
+
+		seedSrc := agent.SeedPath(mt.HostPath)
+		var cmd string
+		if hasSeed {
+			// Copy host content into the volume, then fix ownership
+			cmd = fmt.Sprintf(
+				`cp -a %s/. %s/ 2>/dev/null; chown -R 1000:1000 %s; true`,
+				seedSrc, dst, dst,
+			)
+		} else {
+			// No host content, but still fix volume ownership so the
+			// container user can write to it
+			cmd = fmt.Sprintf(`chown -R 1000:1000 %s 2>/dev/null; true`, dst)
+		}
 		if err := m.Docker.ExecAs(containerName, []string{"sh", "-c", cmd}, docker.ExecOptions{User: "root"}); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "warning: could not seed %s: %v\n", mt.HostPath, err)
 		}
@@ -383,7 +419,10 @@ func (m *Manager) seedAgentVolumes(containerName string, profile *agent.Profile)
 }
 
 func (m *Manager) runLifecycleCommand(containerName string, cmd interface{}, name string) error {
-	opts := docker.ExecOptions{User: "root"}
+	// Run lifecycle commands as the container user (not root), matching
+	// devcontainer spec behavior. This ensures installs land in the
+	// correct user home directory.
+	opts := docker.ExecOptions{}
 
 	switch v := cmd.(type) {
 	case string:

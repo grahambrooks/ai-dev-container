@@ -26,8 +26,12 @@ func TestStrictDropsAllCaps(t *testing.T) {
 	if !p.DropAllCaps {
 		t.Error("strict profile should drop all capabilities")
 	}
-	if len(p.AddCaps) > 0 {
-		t.Error("strict profile should not add any capabilities")
+	// Strict still needs minimal caps for container setup (chown, file ownership)
+	allowed := map[string]bool{"CHOWN": true, "DAC_OVERRIDE": true, "FOWNER": true}
+	for _, cap := range p.AddCaps {
+		if !allowed[cap] {
+			t.Errorf("strict profile has unexpected capability: %s", cap)
+		}
 	}
 }
 
