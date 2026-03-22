@@ -21,9 +21,55 @@ func ResolveCredentials(profile *Profile) *ResolvedCredentials {
 	switch profile.Name {
 	case "claude":
 		return resolveClaudeCredentials()
+	case "copilot", "codex":
+		return resolveGitHubCredentials()
 	default:
 		return &ResolvedCredentials{}
 	}
+}
+
+// resolveGitHubCredentials extracts GitHub OAuth tokens for gh CLI / Copilot.
+//
+// gh CLI stores credentials in:
+//   - macOS: Keychain as an internet password for "github.com"
+//   - Linux: ~/.config/gh/hosts.yml (plain text oauth_token field)
+//   - Env vars: GH_TOKEN, GITHUB_TOKEN (checked first)
+func resolveGitHubCredentials() *ResolvedCredentials {
+	creds := &ResolvedCredentials{}
+
+	// Check env vars first
+	if token := os.Getenv("GH_TOKEN"); token != "" {
+		creds.Env = append(creds.Env, "GH_TOKEN="+token)
+		return creds
+	}
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		creds.Env = append(creds.Env, "GH_TOKEN="+token)
+		return creds
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		return resolveGitHubCredentialsMacOS()
+	default:
+		return creds
+	}
+}
+
+func resolveGitHubCredentialsMacOS() *ResolvedCredentials {
+	creds := &ResolvedCredentials{}
+
+	// gh CLI stores OAuth token in macOS Keychain as an internet password
+	out, err := exec.Command("security", "find-internet-password",
+		"-s", "github.com", "-w").Output()
+	if err != nil {
+		return creds
+	}
+
+	token := strings.TrimSpace(string(out))
+	if token != "" {
+		creds.Env = append(creds.Env, "GH_TOKEN="+token)
+	}
+	return creds
 }
 
 // resolveClaudeCredentials extracts Claude Code OAuth tokens from the host.

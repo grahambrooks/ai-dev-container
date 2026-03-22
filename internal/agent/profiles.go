@@ -7,15 +7,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
 )
 
-// MountSpec describes a directory to mount into the container.
+// MountSpec describes a directory or file to make available in the container.
 type MountSpec struct {
 	HostPath      string // Path relative to home dir on host
-	ContainerPath string // Absolute path in container (empty = mirror host relative to /home/dev)
-	ReadOnly      bool
-	Seed          bool // If true, host content is copied into a named Docker volume on first creation; writable but container-local
+	ContainerPath string // Absolute path in container (empty = mirror host relative to container user home)
+	ReadOnly      bool   // Bind mount read-only from host
+	Copy          bool   // Copy into container instead of mounting (container-local, writable, no host link)
 }
 
 // Profile defines an AI agent's configuration for container setup.
@@ -36,8 +35,8 @@ var knownProfiles = map[string]*Profile{
 		DisplayName: "Claude Code",
 		Binary:      "claude",
 		ConfigMounts: []MountSpec{
-			{HostPath: ".claude", Seed: true},          // Auth tokens, session state — seeded from host, writable in container only
-			{HostPath: ".claude.json", ReadOnly: true}, // Global settings
+			{HostPath: ".claude/settings.json", Copy: true}, // User settings
+			{HostPath: ".claude.json", ReadOnly: true},      // Global settings
 		},
 		NetworkAllow: []string{
 			"api.anthropic.com",
@@ -55,8 +54,8 @@ var knownProfiles = map[string]*Profile{
 		DisplayName: "OpenAI Codex CLI",
 		Binary:      "codex",
 		ConfigMounts: []MountSpec{
-			{HostPath: ".codex", Seed: true},                 // Codex config and auth — seeded from host
-			{HostPath: ".config/github-copilot", Seed: true}, // GitHub Copilot OAuth tokens — seeded from host
+			{HostPath: ".codex", Copy: true},                 // Codex config and auth — seeded from host
+			{HostPath: ".config/github-copilot", Copy: true}, // GitHub Copilot OAuth tokens — seeded from host
 		},
 		NetworkAllow: []string{
 			"api.openai.com",
@@ -66,33 +65,30 @@ var knownProfiles = map[string]*Profile{
 			"objects.githubusercontent.com",
 		},
 		InstallCmd: `set -e && ` +
+			`mkdir -p ~/.local/bin && ` +
 			`ARCH=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/') && ` +
 			`curl -fsSL "https://github.com/openai/codex/releases/latest/download/codex-linux-${ARCH}.tar.gz" | ` +
-			`tar xz -C /usr/local/bin`,
+			`tar xz -C ~/.local/bin`,
 		EnvVars:        map[string]string{},
 		EnvPassthrough: []string{"OPENAI_API_KEY", "GITHUB_TOKEN"},
 	},
 	"copilot": {
 		Name:        "copilot",
 		DisplayName: "GitHub Copilot CLI",
-		Binary:      "gh",
+		Binary:      "copilot",
 		ConfigMounts: []MountSpec{
-			{HostPath: ".config/github-copilot", Seed: true}, // OAuth tokens — seeded from host
-			{HostPath: ".config/gh", ReadOnly: true},         // gh CLI auth
+			{HostPath: ".config/github-copilot", Copy: true}, // OAuth tokens
+			{HostPath: ".config/gh", Copy: true},             // gh CLI auth
 		},
 		NetworkAllow: []string{
 			"copilot-proxy.githubusercontent.com",
 			"api.github.com",
 			"github.com",
 			"objects.githubusercontent.com",
-			"cli.github.com",
+			"gh.io",
 		},
 		InstallCmd: `set -e && ` +
-			`ARCH=$(dpkg --print-architecture 2>/dev/null || (uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')) && ` +
-			`GH_VERSION=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | grep -o '"tag_name":"v[^"]*"' | cut -d'"' -f4 | tr -d v) && ` +
-			`curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" | ` +
-			`tar xz --strip-components=1 -C /usr/local && ` +
-			`gh extension install github/gh-copilot`,
+			`curl -fsSL https://gh.io/copilot-install | bash`,
 		EnvVars:        map[string]string{},
 		EnvPassthrough: []string{"GITHUB_TOKEN"},
 	},
@@ -101,7 +97,7 @@ var knownProfiles = map[string]*Profile{
 		DisplayName: "Gemini CLI",
 		Binary:      "gemini",
 		ConfigMounts: []MountSpec{
-			{HostPath: ".gemini", Seed: true},            // Gemini config and auth — seeded from host
+			{HostPath: ".gemini", Copy: true},            // Gemini config and auth — seeded from host
 			{HostPath: ".config/gcloud", ReadOnly: true}, // GCP credentials for ADC auth
 		},
 		NetworkAllow: []string{
@@ -112,9 +108,10 @@ var knownProfiles = map[string]*Profile{
 			"objects.githubusercontent.com",
 		},
 		InstallCmd: `set -e && ` +
+			`mkdir -p ~/.local/bin && ` +
 			`ARCH=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/') && ` +
 			`curl -fsSL "https://github.com/google-gemini/gemini-cli/releases/latest/download/gemini-cli-linux-${ARCH}.tar.gz" | ` +
-			`tar xz -C /usr/local/bin`,
+			`tar xz -C ~/.local/bin`,
 		EnvVars:        map[string]string{},
 		EnvPassthrough: []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"},
 	},
@@ -142,7 +139,7 @@ var knownProfiles = map[string]*Profile{
 		DisplayName: "Opencode",
 		Binary:      "opencode",
 		ConfigMounts: []MountSpec{
-			{HostPath: ".opencode", Seed: true}, // Auth state — seeded from host
+			{HostPath: ".opencode", Copy: true}, // Auth state — seeded from host
 		},
 		NetworkAllow: []string{
 			"api.anthropic.com",
@@ -151,9 +148,10 @@ var knownProfiles = map[string]*Profile{
 			"objects.githubusercontent.com",
 		},
 		InstallCmd: `set -e && ` +
+			`mkdir -p ~/.local/bin && ` +
 			`ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && ` +
 			`curl -fsSL "https://github.com/opencodeco/opencode/releases/latest/download/opencode_linux_${ARCH}.tar.gz" | ` +
-			`tar xz -C /usr/local/bin`,
+			`tar xz -C ~/.local/bin`,
 		EnvVars:        map[string]string{},
 		EnvPassthrough: []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
 	},
@@ -230,27 +228,4 @@ func SSHAuthSockMount() (hostSocket, containerSocket string) {
 	}
 	// Linux: bind the actual socket
 	return sock, "/tmp/ssh-auth.sock"
-}
-
-// SeedVolumeName returns a deterministic Docker volume name for a seed mount.
-func SeedVolumeName(containerName, hostPath string) string {
-	sanitized := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
-			return r
-		}
-		return '-'
-	}, hostPath)
-	sanitized = strings.Trim(sanitized, "-")
-	return fmt.Sprintf("%s-seed-%s", containerName, sanitized)
-}
-
-// SeedPath returns the temporary seed mount path inside the container for a given host path.
-func SeedPath(hostPath string) string {
-	sanitized := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
-			return r
-		}
-		return '-'
-	}, hostPath)
-	return "/tmp/.devc-seed/" + strings.Trim(sanitized, "-")
 }

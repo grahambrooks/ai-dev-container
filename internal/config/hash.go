@@ -30,7 +30,7 @@ type configSnapshot struct {
 type mountSnapshot struct {
 	HostPath string `json:"hostPath"`
 	ReadOnly bool   `json:"readOnly"`
-	Seed     bool   `json:"seed"`
+	Copy     bool   `json:"copy"`
 }
 
 // ConfigHash computes a hash of all config fields that affect how the container
@@ -67,7 +67,7 @@ func ConfigHash(devCfg *types.DevContainerConfig, custom *types.DevcCustomizatio
 				snap.AgentMounts = append(snap.AgentMounts, mountSnapshot{
 					HostPath: m.HostPath,
 					ReadOnly: m.ReadOnly,
-					Seed:     m.Seed,
+					Copy:     m.Copy,
 				})
 			}
 		}

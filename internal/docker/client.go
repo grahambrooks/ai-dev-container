@@ -219,10 +219,14 @@ func (c *Client) CreateAndStart(
 	home, _ := os.UserHomeDir()
 	containerHome := ContainerHomeDir(ctx, c.api, devCfg.Image, effectiveUser)
 
+	// Only bind-mount agent config entries that are NOT marked Copy.
+	// Copy entries are handled after container start via docker cp.
 	if agentProfile != nil && home != "" {
 		for _, m := range agentProfile.ConfigMounts {
+			if m.Copy {
+				continue // will be copied into container after start
+			}
 			src := home + "/" + m.HostPath
-			// Skip mounts where the source doesn't exist on the host
 			if _, statErr := os.Stat(src); statErr != nil {
 				continue
 			}
@@ -230,39 +234,12 @@ func (c *Client) CreateAndStart(
 			if dst == "" {
 				dst = containerHome + "/" + m.HostPath
 			}
-
-			if m.Seed {
-				// Seed mount: create a named volume at the target path,
-				// bind-mount host dir read-only to a temp seed location
-				volName := agent.SeedVolumeName(containerName, m.HostPath)
-				if err := c.CreateVolume(volName, map[string]string{
-					"devc.managed":   "true",
-					"devc.container": containerName,
-					"devc.seed-path": m.HostPath,
-				}); err != nil {
-					return fmt.Errorf("creating seed volume %s: %w", volName, err)
-				}
-				// Volume mount at target (writable)
-				mounts = append(mounts, mount.Mount{
-					Type:   mount.TypeVolume,
-					Source: volName,
-					Target: dst,
-				})
-				// Bind mount host content to temp seed location (read-only)
-				mounts = append(mounts, mount.Mount{
-					Type:     mount.TypeBind,
-					Source:   src,
-					Target:   agent.SeedPath(m.HostPath),
-					ReadOnly: true,
-				})
-			} else {
-				mounts = append(mounts, mount.Mount{
-					Type:     mount.TypeBind,
-					Source:   src,
-					Target:   dst,
-					ReadOnly: m.ReadOnly,
-				})
-			}
+			mounts = append(mounts, mount.Mount{
+				Type:     mount.TypeBind,
+				Source:   src,
+				Target:   dst,
+				ReadOnly: m.ReadOnly,
+			})
 		}
 	}
 
@@ -569,32 +546,98 @@ func (c *Client) BuildImageWithFeatures(
 	return tag, nil
 }
 
-// CreateVolume creates a named Docker volume with the given labels. Idempotent.
-func (c *Client) CreateVolume(name string, labels map[string]string) error {
+// CopyInto copies a host file or directory into the container at the given path.
+// The content is tar-archived and sent via the Docker API.
+func (c *Client) CopyInto(containerName, hostPath, containerPath string) error {
 	ctx := context.Background()
-	_, err := c.api.VolumeCreate(ctx, dockerclient.VolumeCreateOptions{
-		Name:   name,
-		Labels: labels,
+
+	// Create a tar archive of the host path
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+
+	info, err := os.Stat(hostPath)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", hostPath, err)
+	}
+
+	if info.IsDir() {
+		if err := tarDir(tw, hostPath, ""); err != nil {
+			return err
+		}
+	} else {
+		data, readErr := os.ReadFile(hostPath)
+		if readErr != nil {
+			return fmt.Errorf("reading %s: %w", hostPath, readErr)
+		}
+		if writeErr := tw.WriteHeader(&tar.Header{
+			Name: info.Name(),
+			Size: int64(len(data)),
+			Mode: int64(info.Mode()),
+		}); writeErr != nil {
+			return writeErr
+		}
+		if _, writeErr := tw.Write(data); writeErr != nil {
+			return writeErr
+		}
+	}
+
+	if err := tw.Close(); err != nil {
+		return err
+	}
+
+	_, err = c.api.CopyToContainer(ctx, containerName, dockerclient.CopyToContainerOptions{
+		DestinationPath: containerPath,
+		Content:         &buf,
 	})
 	return err
 }
 
-// RemoveContainerVolumes removes all seed volumes associated with a container.
-func (c *Client) RemoveContainerVolumes(containerName string) error {
-	ctx := context.Background()
-
-	f := make(dockerclient.Filters)
-	f.Add("label", "devc.container="+containerName)
-
-	result, err := c.api.VolumeList(ctx, dockerclient.VolumeListOptions{Filters: f})
+// tarDir recursively adds a directory to a tar writer.
+func tarDir(tw *tar.Writer, srcDir, prefix string) error {
+	entries, err := os.ReadDir(srcDir)
 	if err != nil {
-		return fmt.Errorf("listing volumes: %w", err)
+		return err
 	}
-
-	for _, v := range result.Items {
-		if _, removeErr := c.api.VolumeRemove(ctx, v.Name, dockerclient.VolumeRemoveOptions{Force: true}); removeErr != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "warning: could not remove volume %s: %v\n", v.Name, removeErr)
+	for _, entry := range entries {
+		fullPath := srcDir + "/" + entry.Name()
+		name := entry.Name()
+		if prefix != "" {
+			name = prefix + "/" + entry.Name()
 		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		if entry.IsDir() {
+			if err := tw.WriteHeader(&tar.Header{
+				Name:     name + "/",
+				Mode:     int64(info.Mode()),
+				Typeflag: tar.TypeDir,
+			}); err != nil {
+				return err
+			}
+			if err := tarDir(tw, fullPath, name); err != nil {
+				return err
+			}
+		} else if entry.Type().IsRegular() {
+			data, readErr := os.ReadFile(fullPath)
+			if readErr != nil {
+				continue // skip unreadable files
+			}
+			if err := tw.WriteHeader(&tar.Header{
+				Name: name,
+				Size: int64(len(data)),
+				Mode: int64(info.Mode()),
+			}); err != nil {
+				return err
+			}
+			if _, err := tw.Write(data); err != nil {
+				return err
+			}
+		}
+		// skip symlinks and special files
 	}
 	return nil
 }

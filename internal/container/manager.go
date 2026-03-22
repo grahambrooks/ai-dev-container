@@ -108,14 +108,11 @@ func (m *Manager) Up(opts UpOptions) error {
 		}
 	}
 
-	// Rebuild: remove existing container and its seed volumes
+	// Rebuild: remove existing container first
 	if opts.Rebuild && state != docker.StateNotFound {
 		fmt.Printf("Removing existing container %s...\n", containerName)
 		if err := m.Docker.Remove(containerName, true); err != nil {
 			return fmt.Errorf("removing container for rebuild: %w", err)
-		}
-		if err := m.Docker.RemoveContainerVolumes(containerName); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "warning: could not clean up seed volumes: %v\n", err)
 		}
 		m.Session.Clean(containerName)
 		state = docker.StateNotFound
@@ -190,9 +187,9 @@ func (m *Manager) createContainer(
 	secProfile := security.GetProfile(custom.SecurityProfile)
 	containerHome := m.Docker.ResolveHomeDir(effectiveImage, secProfile.RunAsUser)
 
-	// Seed container-local volumes from host content
+	// Copy agent config from host into container (container-local, writable)
 	if agentProfile != nil {
-		m.seedAgentVolumes(containerName, agentProfile, containerHome)
+		m.copyAgentConfig(containerName, agentProfile, containerHome)
 	}
 
 	// Set up agent workspace path mappings (e.g., Claude trust folders)
@@ -310,11 +307,6 @@ func (m *Manager) Down(workspaceFolder string, force bool) error {
 		return err
 	}
 
-	// Clean up seed volumes associated with this container
-	if err := m.Docker.RemoveContainerVolumes(containerName); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "warning: could not clean up seed volumes: %v\n", err)
-	}
-
 	m.Session.Clean(containerName)
 	fmt.Printf("Container %s removed\n", containerName)
 	return nil
@@ -375,46 +367,51 @@ func (m *Manager) linkAgentBinary(containerName string, profile *agent.Profile) 
 	}
 }
 
-// seedAgentVolumes initializes seed volume mount points with correct ownership
-// and copies host content from temporary seed bind mounts. Runs once on first
-// container creation.
-func (m *Manager) seedAgentVolumes(containerName string, profile *agent.Profile, containerHome string) {
+// copyAgentConfig copies host agent configuration into the container.
+// Files are copied (not mounted) so the container has its own writable copy
+// with no link back to the host filesystem.
+func (m *Manager) copyAgentConfig(containerName string, profile *agent.Profile, containerHome string) {
 	home, _ := os.UserHomeDir()
+	if home == "" {
+		return
+	}
 
 	for _, mt := range profile.ConfigMounts {
-		if !mt.Seed {
+		if !mt.Copy {
 			continue
 		}
 
+		src := home + "/" + mt.HostPath
+		if _, err := os.Stat(src); err != nil {
+			continue // host path doesn't exist, skip
+		}
+
+		// Docker CopyToContainer extracts a tar into the destination directory.
+		// For "~/.claude/settings.json" the tar contains "settings.json",
+		// so the destination must be the parent: containerHome + "/.claude"
 		dst := mt.ContainerPath
 		if dst == "" {
-			dst = containerHome + "/" + mt.HostPath
-		}
-
-		// Check if host content is available to seed
-		hasSeed := false
-		if home != "" {
-			if _, err := os.Stat(home + "/" + mt.HostPath); err == nil {
-				hasSeed = true
-			}
-		}
-
-		seedSrc := agent.SeedPath(mt.HostPath)
-		var cmd string
-		if hasSeed {
-			// Copy host content into the volume, then fix ownership
-			cmd = fmt.Sprintf(
-				`cp -a %s/. %s/ 2>/dev/null; chown -R 1000:1000 %s; true`,
-				seedSrc, dst, dst,
-			)
+			dst = containerHome + "/" + filepath.Dir(mt.HostPath)
 		} else {
-			// No host content, but still fix volume ownership so the
-			// container user can write to it
-			cmd = fmt.Sprintf(`chown -R 1000:1000 %s 2>/dev/null; true`, dst)
+			dst = filepath.Dir(dst)
 		}
-		if err := m.Docker.ExecAs(containerName, []string{"sh", "-c", cmd}, docker.ExecOptions{User: "root"}); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "warning: could not seed %s: %v\n", mt.HostPath, err)
+
+		// Ensure destination directory exists with correct ownership
+		mkdirCmd := fmt.Sprintf(`mkdir -p %s && chown -R 1000:1000 %s`, dst, dst)
+		_ = m.Docker.ExecAs(containerName, []string{"sh", "-c", mkdirCmd}, docker.ExecOptions{User: "root"})
+
+		if err := m.Docker.CopyInto(containerName, src, dst); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: could not copy %s into container: %v\n", mt.HostPath, err)
+			continue
 		}
+
+		// Fix ownership so the container user can read/write
+		target := containerHome + "/" + mt.HostPath
+		if mt.ContainerPath != "" {
+			target = mt.ContainerPath
+		}
+		chownCmd := fmt.Sprintf(`chown -R 1000:1000 %s 2>/dev/null; true`, target)
+		_ = m.Docker.ExecAs(containerName, []string{"sh", "-c", chownCmd}, docker.ExecOptions{User: "root"})
 	}
 }
 
@@ -455,27 +452,18 @@ func (m *Manager) setupAgentPathMappings(containerName string, profile *agent.Pr
 }
 
 func (m *Manager) setupClaudePathMapping(containerName, hostWorkspace, containerWorkspace string) {
-	// Claude stores project config in ~/.claude/projects/<escaped-path>
-	// where <escaped-path> replaces / with -
-	hostKey := claudeProjectKey(hostWorkspace)
 	containerKey := claudeProjectKey(containerWorkspace)
 
-	if hostKey == containerKey {
-		return // Same path, no mapping needed
-	}
-
-	// Create symlink: ~/.claude/projects/<container-key> -> ~/.claude/projects/<host-key>
-	// This runs as the container user so it lands in the right home
+	// Pre-create the project directory so Claude recognizes the workspace as trusted
+	// and doesn't prompt the user on first run
 	cmd := fmt.Sprintf(
 		`home=$(eval echo ~) && `+
-			`if [ -d "$home/.claude/projects/%s" ] && [ ! -e "$home/.claude/projects/%s" ]; then `+
-			`ln -s "$home/.claude/projects/%s" "$home/.claude/projects/%s"; `+
-			`fi`,
-		hostKey, containerKey, hostKey, containerKey,
+			`mkdir -p "$home/.claude/projects/%s"`,
+		containerKey,
 	)
 
 	if err := m.Docker.ExecAs(containerName, []string{"sh", "-c", cmd}, docker.ExecOptions{}); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "warning: could not set up Claude project path mapping: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "warning: could not set up Claude project trust: %v\n", err)
 	}
 }
 
