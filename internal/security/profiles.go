@@ -51,3 +51,22 @@ func GetProfile(name string) *types.SecurityProfile {
 	}
 	return p
 }
+
+// ApplyCustomizations applies customization overrides to a base security profile.
+func ApplyCustomizations(base *types.SecurityProfile, custom *types.DevcCustomization) *types.SecurityProfile {
+	if custom == nil {
+		return base
+	}
+
+	// Clone the base profile to avoid modifying the original
+	p := *base
+
+	if custom.Network != nil {
+		p.Network = *custom.Network
+	}
+	if custom.Resources != nil {
+		p.Resources = *custom.Resources
+	}
+
+	return &p
+}

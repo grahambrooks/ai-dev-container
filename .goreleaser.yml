@@ -33,5 +33,14 @@ brews:
   - repository:
       owner: grahambrooks
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/grahambrooks/devc"
     description: "AI-safe development containers with devcontainer.json support"
+    license: "MIT"
+    install: |
+      bin.install "devc"
+    test: |
+      system "#{bin}/devc", "--help"
+    dependencies:
+      - name: docker
+        type: optional

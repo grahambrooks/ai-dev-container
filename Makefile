@@ -2,7 +2,7 @@ BINARY := devc
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 
-.PHONY: build test clean install lint
+.PHONY: build test clean install lint release
 
 build:
 	go build $(LDFLAGS) -o bin/$(BINARY) .
@@ -15,6 +15,11 @@ test:
 
 lint:
 	go vet ./...
+
+release:
+	$(eval TAG := v$(shell date +%Y.%m.%d))
+	git tag -a $(TAG) -m "Release $(TAG)"
+	git push origin $(TAG)
 
 clean:
 	rm -rf bin/

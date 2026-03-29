@@ -182,6 +182,7 @@ func (m *Manager) createContainer(
 
 	// Resolve security profile early — needed for home dir and pre-create warnings.
 	secProfile := security.GetProfile(custom.SecurityProfile)
+	secProfile = security.ApplyCustomizations(secProfile, custom)
 
 	fmt.Printf("Creating container %s...\n", containerName)
 
@@ -210,7 +211,18 @@ func (m *Manager) createContainer(
 	// Set up each agent: copy config, path mappings
 	for _, p := range agentProfiles {
 		m.copyAgentConfig(containerName, p, containerHome)
-		m.setupAgentPathMappings(containerName, p, workspaceFolder, wsInContainer, containerHome)
+		if p.SetupFunc != nil {
+			err := p.SetupFunc(containerName, workspaceFolder, wsInContainer, containerHome, func(cmd []string, user string) error {
+				return m.Docker.ExecAs(containerName, cmd, docker.ExecOptions{User: user})
+			})
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "warning: agent %s setup failed: %v\n", p.Name, err)
+			}
+		}
+		// Special case for Claude config patching until we move it to a better place
+		if p.Name == "claude" {
+			m.setupClaudePathMapping(containerName, workspaceFolder, wsInContainer, containerHome)
+		}
 	}
 
 	// Run lifecycle commands in order
@@ -457,19 +469,6 @@ func (m *Manager) runLifecycleCommand(containerName string, cmd interface{}, nam
 	}
 }
 
-// setupAgentPathMappings creates path mappings inside the container so agent trust/config
-// that was established on the host (with host paths) also works for container paths.
-//
-// For example, Claude Code stores per-project trust in ~/.claude.json under the "projects"
-// key, keyed by the absolute workspace path. On the host this is /Users/graham/dev/myproject
-// but in the container it's /workspaces/myproject. This method pre-registers the container
-// path so Claude doesn't prompt for workspace authorization on every run.
-func (m *Manager) setupAgentPathMappings(containerName string, profile *agent.Profile, hostWorkspace, containerWorkspace, containerHome string) {
-	switch profile.Name {
-	case "claude":
-		m.setupClaudePathMapping(containerName, hostWorkspace, containerWorkspace, containerHome)
-	}
-}
 
 func (m *Manager) setupClaudePathMapping(containerName, hostWorkspace, containerWorkspace, containerHome string) {
 	containerKey := claudeProjectKey(containerWorkspace)

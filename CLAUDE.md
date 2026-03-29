@@ -9,8 +9,16 @@ make build          # Build binary to bin/devc
 make test           # go test ./...
 make lint           # go vet ./...
 make install        # go install .
+make release        # Tag and push a date-based release (triggers CI)
 go test ./internal/config   # Run tests for a single package
 ```
+
+## Release & Distribution
+
+Releases are driven by GoReleaser (`.goreleaser.yml`) and triggered by pushing a `v*` tag
+(`.github/workflows/release.yml`). GoReleaser builds cross-platform binaries (linux/darwin × amd64/arm64), creates a
+GitHub Release, and pushes a Homebrew formula to `grahambrooks/homebrew-tap`. The release workflow requires two secrets:
+`GITHUB_TOKEN` (automatic) and `HOMEBREW_TAP_GITHUB_TOKEN` (PAT with write access to the tap repo).
 
 ## Architecture
 

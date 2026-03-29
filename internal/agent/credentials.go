@@ -18,23 +18,19 @@ type ResolvedCredentials struct {
 // the given agent profile. On macOS, this reads from Keychain. On Linux,
 // it checks for credential files or env vars.
 func ResolveCredentials(profile *Profile) *ResolvedCredentials {
-	switch profile.Name {
-	case "claude":
-		return resolveClaudeCredentials()
-	case "copilot", "codex":
-		return resolveGitHubCredentials()
-	default:
-		return &ResolvedCredentials{}
+	if profile.ResolveCreds != nil {
+		return profile.ResolveCreds()
 	}
+	return &ResolvedCredentials{}
 }
 
-// resolveGitHubCredentials extracts GitHub OAuth tokens for gh CLI / Copilot.
+// ResolveGitHubCredentials extracts GitHub OAuth tokens for gh CLI / Copilot.
 //
 // gh CLI stores credentials in:
 //   - macOS: Keychain as an internet password for "github.com"
 //   - Linux: ~/.config/gh/hosts.yml (plain text oauth_token field)
 //   - Env vars: GH_TOKEN, GITHUB_TOKEN (checked first)
-func resolveGitHubCredentials() *ResolvedCredentials {
+func ResolveGitHubCredentials() *ResolvedCredentials {
 	creds := &ResolvedCredentials{}
 
 	// Check env vars first
@@ -72,13 +68,13 @@ func resolveGitHubCredentialsMacOS() *ResolvedCredentials {
 	return creds
 }
 
-// resolveClaudeCredentials extracts Claude Code OAuth tokens from the host.
+// ResolveClaudeCredentials extracts Claude Code OAuth tokens from the host.
 //
 // Claude Code stores credentials in:
 //   - macOS: Keychain under "Claude Code-credentials" (encrypted with "Claude Safe Storage")
 //   - Linux: ~/.claude/credentials (plain JSON, if setup-token was used)
 //   - Env vars: CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY (checked first)
-func resolveClaudeCredentials() *ResolvedCredentials {
+func ResolveClaudeCredentials() *ResolvedCredentials {
 	creds := &ResolvedCredentials{}
 
 	// If the user already has an API key or OAuth token set, pass it through

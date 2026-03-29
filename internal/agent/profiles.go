@@ -27,6 +27,8 @@ type Profile struct {
 	InstallCmd     string            // Shell command to install the agent binary in the container
 	EnvVars        map[string]string // Static environment variables
 	EnvPassthrough []string          // Host env vars to forward into the container (e.g., API keys)
+	SetupFunc      func(containerName, hostWorkspace, containerWorkspace, containerHome string, runExec func(cmd []string, user string) error) error
+	ResolveCreds   func() *ResolvedCredentials
 }
 
 var knownProfiles = map[string]*Profile{
@@ -48,6 +50,7 @@ var knownProfiles = map[string]*Profile{
 			`curl -fsSL https://claude.ai/install.sh | bash`,
 		EnvVars:        map[string]string{},
 		EnvPassthrough: []string{"ANTHROPIC_API_KEY"},
+		ResolveCreds:   ResolveClaudeCredentials,
 	},
 	"codex": {
 		Name:        "codex",
@@ -71,6 +74,7 @@ var knownProfiles = map[string]*Profile{
 			`tar xz -C ~/.local/bin`,
 		EnvVars:        map[string]string{},
 		EnvPassthrough: []string{"OPENAI_API_KEY", "GITHUB_TOKEN"},
+		ResolveCreds:   ResolveGitHubCredentials,
 	},
 	"copilot": {
 		Name:        "copilot",
@@ -91,6 +95,7 @@ var knownProfiles = map[string]*Profile{
 			`curl -fsSL https://gh.io/copilot-install | bash`,
 		EnvVars:        map[string]string{},
 		EnvPassthrough: []string{"GITHUB_TOKEN"},
+		ResolveCreds:   ResolveGitHubCredentials,
 	},
 	"gemini": {
 		Name:        "gemini",
