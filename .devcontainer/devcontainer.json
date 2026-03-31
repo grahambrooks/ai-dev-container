@@ -1,0 +1,42 @@
+{
+  "customizations": {
+    "devc": {
+      "agent": "claude",
+      "network": {
+        "allowlist": [
+          "api.anthropic.com",
+          "api.github.com",
+          "claude.ai",
+          "cli.github.com",
+          "copilot-proxy.githubusercontent.com",
+          "github.com",
+          "marketplace.visualstudio.com",
+          "objects.githubusercontent.com",
+          "registry.npmjs.org",
+          "sentry.io",
+          "statsig.anthropic.com",
+          "statsig.anthropic.com",
+          "statsig.com",
+          "update.code.visualstudio.com",
+          "vscode.blob.core.windows.net"
+        ],
+        "mode": "restricted"
+      },
+      "resources": {
+        "cpus": "4",
+        "memory": "8g",
+        "pidsLimit": 256
+      },
+      "securityProfile": "moderate",
+      "session": {
+        "stopOnLastDetach": true
+      }
+    }
+  },
+  "features": {
+    "ghcr.io/grahambrooks/codemap/codemap:latest": {}
+  },
+  "image": "mcr.microsoft.com/devcontainers/go:latest",
+  "name": "ai-dev-container",
+  "postCreateCommand": "set -e \u0026\u0026 curl -fsSL https://claude.ai/install.sh | bash"
+}

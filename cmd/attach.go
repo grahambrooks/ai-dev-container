@@ -17,6 +17,7 @@ func newAttachCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer mgr.Close()
 			return mgr.Attach(getWorkspaceFolder(args), shellFlag)
 		},
 	}

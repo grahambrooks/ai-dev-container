@@ -17,6 +17,7 @@ func newStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer mgr.Close()
 			return mgr.Stop(getWorkspaceFolder(args), forceFlag)
 		},
 	}

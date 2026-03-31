@@ -17,6 +17,7 @@ func newExecCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer mgr.Close()
 			ws := workspaceFlag
 			if ws == "" {
 				ws = getWorkspaceFolder(nil)

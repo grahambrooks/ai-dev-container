@@ -24,6 +24,7 @@ func newUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer mgr.Close()
 
 			var agents []string
 			if agentFlag != "" {

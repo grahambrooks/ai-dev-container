@@ -11,11 +11,12 @@ var (
 	flagOutputFormat string
 )
 
-func NewRootCmd() *cobra.Command {
+func NewRootCmd(version string) *cobra.Command {
 	root := &cobra.Command{
 		Use:          "devc",
 		Short:        "AI-safe development containers",
 		Long:         "Create and manage AI-safe development containers with devcontainer.json support.",
+		Version:      version,
 		SilenceUsage: true,
 	}
 
@@ -37,8 +38,8 @@ func NewRootCmd() *cobra.Command {
 	return root
 }
 
-func Execute() {
-	if err := NewRootCmd().Execute(); err != nil {
+func Execute(version string) {
+	if err := NewRootCmd(version).Execute(); err != nil {
 		os.Exit(1)
 	}
 }

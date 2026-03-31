@@ -120,9 +120,7 @@ func (c *Client) Pull(image string) error {
 		return fmt.Errorf("pulling image: %w", err)
 	}
 	defer resp.Close()
-	// Drain the reader to complete the pull; stream to stdout for progress
-	_, err = io.Copy(os.Stdout, resp)
-	return err
+	return streamBuildOutput(resp, os.Stdout)
 }
 
 // CreateAndStart creates and starts a container with the given configuration.
@@ -560,8 +558,7 @@ func (c *Client) BuildImageWithFeatures(
 	}
 	defer resp.Body.Close()
 
-	// Drain build output to stdout
-	if _, err := io.Copy(os.Stdout, resp.Body); err != nil {
+	if err := streamBuildOutput(resp.Body, os.Stdout); err != nil {
 		return "", fmt.Errorf("reading build output: %w", err)
 	}
 

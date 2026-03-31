@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/grahambrooks/devc/pkg/types"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestContainerName(t *testing.T) {
@@ -192,12 +193,12 @@ func TestSaveDevcontainerConfig(t *testing.T) {
 func TestSaveDevcontainerConfig_PreservesExistingFields(t *testing.T) {
 	dir := t.TempDir()
 	devDir := filepath.Join(dir, ".devcontainer")
-	os.MkdirAll(devDir, 0755)
+	assert.NoError(t, os.MkdirAll(devDir, 0755))
 	path := filepath.Join(devDir, "devcontainer.json")
 
 	// Write initial config with an extra field
 	initial := `{"name": "test", "image": "old:image", "postCreateCommand": "npm install"}`
-	os.WriteFile(path, []byte(initial), 0644)
+	assert.NoError(t, os.WriteFile(path, []byte(initial), 0644))
 
 	// Update just the image
 	cfg := &types.DevContainerConfig{
@@ -212,7 +213,7 @@ func TestSaveDevcontainerConfig_PreservesExistingFields(t *testing.T) {
 	// Reload raw to check postCreateCommand is preserved
 	data, _ := os.ReadFile(path)
 	var raw map[string]interface{}
-	json.Unmarshal(data, &raw)
+	assert.NoError(t, json.Unmarshal(data, &raw))
 
 	if raw["image"] != "new:image" {
 		t.Errorf("expected updated image, got %v", raw["image"])

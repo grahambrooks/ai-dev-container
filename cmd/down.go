@@ -17,6 +17,7 @@ func newDownCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer mgr.Close()
 			return mgr.Down(getWorkspaceFolder(args), forceFlag)
 		},
 	}

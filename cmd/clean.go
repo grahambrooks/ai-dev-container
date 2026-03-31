@@ -18,6 +18,7 @@ func newCleanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer mgr.Close()
 
 			removed, err := mgr.Clean(dryRunFlag)
 			if err != nil {

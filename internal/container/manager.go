@@ -37,6 +37,11 @@ func NewManager() (*Manager, error) {
 	return &Manager{Docker: dc, Session: tracker}, nil
 }
 
+// Implement closeable for Manager
+func (m *Manager) Close() error {
+	return m.Docker.Close()
+}
+
 // UpOptions configures the "up" command.
 type UpOptions struct {
 	WorkspaceFolder string
@@ -468,7 +473,6 @@ func (m *Manager) runLifecycleCommand(containerName string, cmd interface{}, nam
 		return fmt.Errorf("unsupported command format for %s", name)
 	}
 }
-
 
 func (m *Manager) setupClaudePathMapping(containerName, hostWorkspace, containerWorkspace, containerHome string) {
 	containerKey := claudeProjectKey(containerWorkspace)

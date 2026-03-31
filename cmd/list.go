@@ -20,6 +20,7 @@ func newListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer mgr.Close()
 
 			containers, err := mgr.List()
 			if err != nil {

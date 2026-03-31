@@ -8,18 +8,12 @@ import (
 )
 
 func buildTag(baseImage string, features map[string]interface{}, containerName string) string {
-	h := sha256.New()
-	h.Write([]byte(baseImage))
+	// Hash the generated Dockerfile content so that code changes to install
+	// commands (e.g. switching from apt-get to OCI fetch) bust the cache.
+	dockerfile := generateDockerfile(baseImage, features)
 
-	keys := make([]string, 0, len(features))
-	for k := range features {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		h.Write([]byte(k))
-		h.Write([]byte(fmt.Sprintf("%v", features[k])))
-	}
+	h := sha256.New()
+	h.Write([]byte(dockerfile))
 
 	short := fmt.Sprintf("%x", h.Sum(nil)[:6])
 	return fmt.Sprintf("devc/%s:%s", containerName, short)
@@ -158,6 +152,9 @@ func featureInstallCommand(ref string, opts map[string]string) string {
 		)
 
 	default:
+		if isOCIFeature(ref) {
+			return ociFeatureInstallCommand(ref, opts)
+		}
 		return fmt.Sprintf(
 			"echo 'Feature %s: manual installation may be required' && "+
 				"apt-get update && apt-get install -y %s 2>/dev/null || "+
@@ -165,6 +162,71 @@ func featureInstallCommand(ref string, opts map[string]string) string {
 			ref, name, ref,
 		)
 	}
+}
+
+// isOCIFeature returns true if the feature reference looks like an OCI artifact (ghcr.io/...).
+func isOCIFeature(ref string) bool {
+	return strings.Contains(ref, "ghcr.io/") || strings.Contains(ref, ".azurecr.io/") || strings.Contains(ref, ".pkg.dev/")
+}
+
+// ociFeatureInstallCommand generates a shell command that pulls an OCI devcontainer
+// feature and runs its install.sh. GHCR (and other registries) require a bearer
+// token even for public packages, so the command first obtains an anonymous token
+// from the registry's token endpoint.
+func ociFeatureInstallCommand(ref string, opts map[string]string) string {
+	registry, repo, tag := parseOCIRef(ref)
+
+	// Build environment variables from feature options
+	var envExports string
+	for k, v := range opts {
+		envExports += fmt.Sprintf("export %s=%q && ", strings.ToUpper(k), v)
+	}
+
+	return fmt.Sprintf(
+		`set -e && apt-get update && apt-get install -y curl jq ca-certificates && `+
+			`TOKEN=$(curl -s "https://%s/token?service=%s&scope=repository:%s:pull" | jq -r '.token') && `+
+			`MANIFEST=$(curl -sL "https://%s/v2/%s/manifests/%s" `+
+			`-H "Accept: application/vnd.oci.image.manifest.v1+json" `+
+			`-H "Authorization: Bearer $TOKEN") && `+
+			`DIGEST=$(echo "$MANIFEST" | jq -r '.layers[0].digest') && `+
+			`TMPDIR=$(mktemp -d) && `+
+			`curl -sL "https://%s/v2/%s/blobs/$DIGEST" `+
+			`-H "Authorization: Bearer $TOKEN" | tar x -C "$TMPDIR" && `+
+			`cd "$TMPDIR" && `+
+			`%s`+
+			`chmod +x install.sh && ./install.sh && `+
+			`cd / && rm -rf "$TMPDIR" && `+
+			`apt-get clean && rm -rf /var/lib/apt/lists/*`,
+		registry, registry, repo,
+		registry, repo, tag,
+		registry, repo,
+		envExports,
+	)
+}
+
+// parseOCIRef splits an OCI feature reference like "ghcr.io/owner/repo/feature:tag"
+// into registry, repository, and tag components.
+func parseOCIRef(ref string) (registry, repo, tag string) {
+	tag = "latest"
+	if idx := strings.LastIndex(ref, ":"); idx != -1 {
+		// Only treat as tag if the part after : doesn't contain /
+		candidate := ref[idx+1:]
+		if !strings.Contains(candidate, "/") {
+			tag = candidate
+			ref = ref[:idx]
+		}
+	}
+
+	// First segment is registry, rest is repo
+	parts := strings.SplitN(ref, "/", 2)
+	if len(parts) == 2 {
+		registry = parts[0]
+		repo = parts[1]
+	} else {
+		registry = "ghcr.io"
+		repo = ref
+	}
+	return
 }
 
 func extractFeatureName(ref string) string {
