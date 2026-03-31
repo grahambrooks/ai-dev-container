@@ -8,6 +8,7 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
@@ -17,6 +18,9 @@ builds:
 archives:
   - format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
 
 checksum:
   name_template: "checksums.txt"
@@ -32,9 +36,9 @@ changelog:
 brews:
   - repository:
       owner: grahambrooks
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: "https://github.com/grahambrooks/devc"
+      name: ai-dev-container
+    directory: HomebrewFormula
+    homepage: "https://github.com/grahambrooks/ai-dev-container"
     description: "AI-safe development containers with devcontainer.json support"
     license: "MIT"
     install: |

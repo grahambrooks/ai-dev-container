@@ -17,8 +17,8 @@ go test ./internal/config   # Run tests for a single package
 
 Releases are driven by GoReleaser (`.goreleaser.yml`) and triggered by pushing a `v*` tag
 (`.github/workflows/release.yml`). GoReleaser builds cross-platform binaries (linux/darwin × amd64/arm64), creates a
-GitHub Release, and pushes a Homebrew formula to `grahambrooks/homebrew-tap`. The release workflow requires two secrets:
-`GITHUB_TOKEN` (automatic) and `HOMEBREW_TAP_GITHUB_TOKEN` (PAT with write access to the tap repo).
+GitHub Release, and commits a Homebrew formula to `HomebrewFormula/` in this repo. The release workflow only requires
+`GITHUB_TOKEN` (automatic). Users install via `brew install grahambrooks/ai-dev-container/devc`.
 
 ## Architecture
 
