@@ -1,0 +1,29 @@
+.goreleaser.yml
+  ed9e72b6ef0e0af9 11,21-23,39-41
+CLAUDE.md
+  ed9e72b6ef0e0af9 20-21
+HomebrewFormula/devc.rb
+  ed9e72b6ef0e0af9 1-45
+CONTRIBUTING.md
+  ed9e72b6ef0e0af9 46,50-51,54,57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.23",
+  "base_commit_sha": "176cd36d6b261f9bb512fe469a5ed18a2315e5f6",
+  "prompts": {
+    "ed9e72b6ef0e0af9": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1774967588474",
+        "model": "unknown"
+      },
+      "human_author": "Graham Brooks <graham@grahambrooks.com>",
+      "messages": [],
+      "total_additions": 59,
+      "total_deletions": 12,
+      "accepted_lines": 59,
+      "overriden_lines": 0
+    }
+  }
+}
