@@ -18,8 +18,8 @@ lint:
 
 release:
 	$(eval TAG := v$(shell date +%Y.%m.%d))
-	git tag -a $(TAG) -m "Release $(TAG)"
-	git push origin $(TAG)
+	git tag -fa $(TAG) -m "Release $(TAG)"
+	git push origin $(TAG) --force
 
 clean:
 	rm -rf bin/
