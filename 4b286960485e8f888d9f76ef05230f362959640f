@@ -1,0 +1,23 @@
+Makefile
+  ed9e72b6ef0e0af9 21-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.23",
+  "base_commit_sha": "4b286960485e8f888d9f76ef05230f362959640f",
+  "prompts": {
+    "ed9e72b6ef0e0af9": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1774967588474",
+        "model": "unknown"
+      },
+      "human_author": "Graham Brooks <graham@grahambrooks.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
