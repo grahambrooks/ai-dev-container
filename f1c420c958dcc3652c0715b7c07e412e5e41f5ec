@@ -1,0 +1,66 @@
+cmd/stop.go
+  ed9e72b6ef0e0af9 20
+internal/docker/build_test.go
+  8e7724a4b911b0ca 73-147
+internal/docker/output.go
+  8e7724a4b911b0ca 1-93
+cmd/list.go
+  ed9e72b6ef0e0af9 23
+cmd/up.go
+  ed9e72b6ef0e0af9 27
+internal/docker/output_test.go
+  8e7724a4b911b0ca 1-113
+internal/docker/client.go
+  8e7724a4b911b0ca 123,561
+cmd/attach.go
+  ed9e72b6ef0e0af9 20
+cmd/clean.go
+  ed9e72b6ef0e0af9 21
+main.go
+  ed9e72b6ef0e0af9 5-7,9
+internal/config/config_test.go
+  ed9e72b6ef0e0af9 10,196,201
+.devcontainer/devcontainer.json
+  8e7724a4b911b0ca 37
+cmd/exec.go
+  ed9e72b6ef0e0af9 20
+internal/docker/build.go
+  8e7724a4b911b0ca 11-13,15-16,155-157,167-231
+cmd/down.go
+  ed9e72b6ef0e0af9 20
+cmd/root.go
+  ed9e72b6ef0e0af9 14,19,41-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "f1c420c958dcc3652c0715b7c07e412e5e41f5ec",
+  "prompts": {
+    "8e7724a4b911b0ca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a70792a-8d72-4c52-a518-86a71b465593",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Graham Brooks <graham@grahambrooks.com>",
+      "messages": [],
+      "total_additions": 426,
+      "total_deletions": 86,
+      "accepted_lines": 357,
+      "overriden_lines": 0
+    },
+    "ed9e72b6ef0e0af9": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1774967588474",
+        "model": "unknown"
+      },
+      "human_author": "Graham Brooks <graham@grahambrooks.com>",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 9,
+      "accepted_lines": 18,
+      "overriden_lines": 1
+    }
+  }
+}
