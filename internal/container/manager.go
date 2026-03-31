@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/grahambrooks/devc/internal/agent"
@@ -15,6 +16,12 @@ import (
 	"github.com/grahambrooks/devc/internal/session"
 	"github.com/grahambrooks/devc/pkg/types"
 )
+
+// safeShellPathRe matches path components that are safe to interpolate into
+// shell commands. This covers the output of claudeProjectKey, which replaces
+// path separators with dashes. We reject anything outside this set to prevent
+// command injection via workspace paths with unusual characters.
+var safeShellPathRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // Manager orchestrates container lifecycle operations.
 type Manager struct {
@@ -230,7 +237,13 @@ func (m *Manager) createContainer(
 		}
 	}
 
-	// Run lifecycle commands in order
+	// Run lifecycle commands in order.
+	// These commands come directly from devcontainer.json and run inside the container.
+	// They are logged before execution so the user can see what is being run.
+	hasLifecycle := devCfg.OnCreateCommand != nil || devCfg.PostCreateCommand != nil || devCfg.PostStartCommand != nil
+	if hasLifecycle {
+		fmt.Println("[devc] Running devcontainer lifecycle commands (source: devcontainer.json)")
+	}
 	if devCfg.OnCreateCommand != nil {
 		if lcErr := m.runLifecycleCommand(containerName, devCfg.OnCreateCommand, "onCreateCommand"); lcErr != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "warning: onCreateCommand failed: %v\n", lcErr)
@@ -460,14 +473,14 @@ func (m *Manager) runLifecycleCommand(containerName string, cmd interface{}, nam
 
 	switch v := cmd.(type) {
 	case string:
-		fmt.Printf("Running %s: %s\n", name, v)
+		fmt.Printf("[devc]   %s: $ %s\n", name, v)
 		return m.Docker.ExecAs(containerName, []string{"sh", "-c", v}, opts)
 	case []interface{}:
 		args := make([]string, len(v))
 		for i, a := range v {
 			args[i] = fmt.Sprintf("%v", a)
 		}
-		fmt.Printf("Running %s: %v\n", name, args)
+		fmt.Printf("[devc]   %s: %v\n", name, args)
 		return m.Docker.ExecAs(containerName, args, opts)
 	default:
 		return fmt.Errorf("unsupported command format for %s", name)
@@ -478,13 +491,20 @@ func (m *Manager) setupClaudePathMapping(containerName, hostWorkspace, container
 	containerKey := claudeProjectKey(containerWorkspace)
 
 	// Pre-create the session history directory so Claude can store transcripts.
-	cmd := fmt.Sprintf(
-		`home=$(eval echo ~) && `+
-			`mkdir -p "$home/.claude/projects/%s"`,
-		containerKey,
-	)
-	if err := m.Docker.ExecAs(containerName, []string{"sh", "-c", cmd}, docker.ExecOptions{}); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "warning: could not set up Claude session directory: %v\n", err)
+	// Validate the key before interpolating it into a shell command: claudeProjectKey
+	// replaces path separators with dashes but does not otherwise sanitize the input,
+	// so workspace paths with spaces or shell metacharacters could allow injection.
+	if !safeShellPathRe.MatchString(containerKey) {
+		_, _ = fmt.Fprintf(os.Stderr, "warning: skipping Claude session directory setup: workspace path %q produces unsafe key %q\n", containerWorkspace, containerKey)
+	} else {
+		cmd := fmt.Sprintf(
+			`home=$(eval echo ~) && `+
+				`mkdir -p "$home/.claude/projects/%s"`,
+			containerKey,
+		)
+		if err := m.Docker.ExecAs(containerName, []string{"sh", "-c", cmd}, docker.ExecOptions{}); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: could not set up Claude session directory: %v\n", err)
+		}
 	}
 
 	// Patch ~/.claude.json in the container to mark the workspace as trusted so

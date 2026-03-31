@@ -144,6 +144,18 @@ func (c *Client) CreateAndStart(
 
 	env := make([]string, 0, len(devCfg.ContainerEnv))
 	for k, v := range devCfg.ContainerEnv {
+		// Block containerEnv from overriding credential variables or network proxy
+		// settings. These could redirect agent traffic to attacker-controlled endpoints
+		// or override credentials resolved from the host's secure store.
+		if isSensitiveEnvKey(k) {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: ignoring containerEnv entry %q: setting sensitive variables via devcontainer.json is not allowed\n", k)
+			continue
+		}
+		// Reject values with newlines or null bytes to prevent env var injection.
+		if strings.ContainsAny(v, "\n\r\x00") {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: ignoring containerEnv entry %q: value contains newline or null byte\n", k)
+			continue
+		}
 		env = append(env, k+"="+v)
 	}
 
@@ -664,6 +676,26 @@ func tarDir(tw *tar.Writer, srcDir, prefix string) error {
 // ResolveHomeDir returns the home directory for the given user in the given image.
 func (c *Client) ResolveHomeDir(imageName, user string) string {
 	return ContainerHomeDir(context.Background(), c.api, imageName, user)
+}
+
+// isSensitiveEnvKey returns true if the variable name should not be settable
+// via devcontainer.json containerEnv. This covers credentials (API keys, tokens,
+// secrets, passwords) and network proxy variables that could redirect agent
+// traffic to attacker-controlled infrastructure.
+func isSensitiveEnvKey(key string) bool {
+	upper := strings.ToUpper(key)
+	sensitiveEndings := []string{"_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_CREDENTIAL"}
+	for _, suffix := range sensitiveEndings {
+		if strings.HasSuffix(upper, suffix) {
+			return true
+		}
+	}
+	// Proxy variables can redirect all agent HTTP/HTTPS traffic.
+	switch upper {
+	case "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY":
+		return true
+	}
+	return false
 }
 
 func parseMemoryString(s string) int64 {

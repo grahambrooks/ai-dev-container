@@ -3,9 +3,38 @@ package docker
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// Compiled regexps for OCI reference component validation.
+// These reject shell metacharacters that could allow command injection
+// when components are interpolated into Dockerfile RUN commands.
+var (
+	ociRegistryRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+	ociRepoRe     = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*$`)
+	ociTagRe      = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+	featureNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]*$`)
+	envKeyRe      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+)
+
+// validateOCIRef checks that all components of an OCI reference are safe
+// for interpolation into shell commands. Returns an error if any component
+// contains characters outside the expected safe set.
+func validateOCIRef(registry, repo, tag string) error {
+	if !ociRegistryRe.MatchString(registry) {
+		return fmt.Errorf("invalid OCI registry %q: only alphanumeric characters, dots, and hyphens are allowed", registry)
+	}
+	if !ociRepoRe.MatchString(repo) {
+		return fmt.Errorf("invalid OCI repository %q: only lowercase alphanumeric characters, dots, hyphens, and path separators are allowed", repo)
+	}
+	if !ociTagRe.MatchString(tag) {
+		return fmt.Errorf("invalid OCI tag %q: only alphanumeric characters, dots, and hyphens are allowed", tag)
+	}
+	return nil
+}
 
 func buildTag(baseImage string, features map[string]interface{}, containerName string) string {
 	// Hash the generated Dockerfile content so that code changes to install
@@ -155,11 +184,18 @@ func featureInstallCommand(ref string, opts map[string]string) string {
 		if isOCIFeature(ref) {
 			return ociFeatureInstallCommand(ref, opts)
 		}
+		// Validate the extracted package name before using it in the apt-get command.
+		// Feature names from untrusted devcontainer.json could contain shell
+		// metacharacters that would allow command injection.
+		if !featureNameRe.MatchString(name) {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: skipping feature with unsafe name %q\n", ref)
+			return ""
+		}
 		return fmt.Sprintf(
 			"echo 'Feature %s: manual installation may be required' && "+
 				"apt-get update && apt-get install -y %s 2>/dev/null || "+
 				"echo 'Could not auto-install feature %s'",
-			ref, name, ref,
+			name, name, name,
 		)
 	}
 }
@@ -176,10 +212,22 @@ func isOCIFeature(ref string) bool {
 func ociFeatureInstallCommand(ref string, opts map[string]string) string {
 	registry, repo, tag := parseOCIRef(ref)
 
-	// Build environment variables from feature options
+	if err := validateOCIRef(registry, repo, tag); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "warning: skipping OCI feature %q: %v\n", ref, err)
+		return ""
+	}
+
+	// Build environment variables from feature options.
+	// Option keys are validated against envKeyRe before being exported to prevent
+	// environment variable name injection into the install.sh shell environment.
 	var envExports string
 	for k, v := range opts {
-		envExports += fmt.Sprintf("export %s=%q && ", strings.ToUpper(k), v)
+		key := strings.ToUpper(k)
+		if !envKeyRe.MatchString(key) {
+			_, _ = fmt.Fprintf(os.Stderr, "warning: skipping feature option with unsafe key %q\n", k)
+			continue
+		}
+		envExports += fmt.Sprintf("export %s=%q && ", key, v)
 	}
 
 	return fmt.Sprintf(
