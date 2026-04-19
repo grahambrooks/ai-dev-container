@@ -1,0 +1,16 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ai-dev-container
+  title: ai-dev-container
+  description: Development container for AI projects.
+  annotations:
+    github.com/project-slug: grahambrooks/ai-dev-container
+spec:
+  type: service
+  lifecycle: experimental
+  owner: user:grahambrooks
+  system: ai
+  tags:
+    - devcontainer
+    - ai
