@@ -219,24 +219,24 @@ func CommonAuthMounts() []MountSpec {
 	return mounts
 }
 
-// SSHAuthSockMount returns the host and container socket paths for SSH agent forwarding.
-// Returns empty containerSocket if SSH_AUTH_SOCK is not set on the host.
+// SSHAuthSockMount returns the bind-mount source and container socket paths for SSH
+// agent forwarding. Returns empty paths if SSH_AUTH_SOCK is not set on the host.
 //
-// On macOS, Docker Desktop automatically injects the SSH agent socket into every
-// container at /run/host-services/ssh-auth.sock — no bind mount is required.
-// hostSocket is empty in this case; callers should only set the env var.
+// On macOS, Docker Desktop exposes the host agent at /run/host-services/ssh-auth.sock
+// inside its VM; that path must still be bind-mounted into the container. It does not
+// exist on the macOS filesystem, so inVM is true and callers must not stat it.
 //
 // On Linux, the host socket is bind-mounted into the container at a fixed path.
-func SSHAuthSockMount() (hostSocket, containerSocket string) {
+func SSHAuthSockMount() (hostSocket, containerSocket string, inVM bool) {
 	sock := os.Getenv("SSH_AUTH_SOCK")
 	if sock == "" {
-		return "", ""
+		return "", "", false
 	}
 
 	if runtime.GOOS == "darwin" {
-		// Docker Desktop injects the agent socket automatically; skip the bind mount.
-		return "", "/run/host-services/ssh-auth.sock"
+		const desktopSock = "/run/host-services/ssh-auth.sock"
+		return desktopSock, desktopSock, true
 	}
 	// Linux: bind the actual socket into the container.
-	return sock, "/tmp/ssh-auth.sock"
+	return sock, "/tmp/ssh-auth.sock", false
 }

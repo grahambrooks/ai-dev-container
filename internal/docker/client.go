@@ -211,15 +211,6 @@ func (c *Client) CreateAndStart(
 	profile := security.GetProfile(custom.SecurityProfile)
 	effectiveUser := profile.RunAsUser
 
-	containerCfg := &container.Config{
-		Image:      devCfg.Image,
-		Cmd:        cmd,
-		Env:        env,
-		Labels:     labels,
-		WorkingDir: wsTarget,
-		User:       effectiveUser,
-	}
-
 	// Build host config
 	mountMode := "rw"
 	if custom.Filesystem != nil && custom.Filesystem.ProjectMountMode != "" {
@@ -289,20 +280,20 @@ func (c *Client) CreateAndStart(
 	}
 
 	// SSH agent socket forwarding.
-	// On macOS, Docker Desktop provides the socket automatically; we only set the env var.
-	// On Linux, we bind-mount the host socket into the container.
-	if hostSock, containerSock := agent.SSHAuthSockMount(); containerSock != "" {
-		if hostSock != "" {
-			if _, statErr := os.Stat(hostSock); statErr == nil {
-				mounts = append(mounts, mount.Mount{
-					Type:     mount.TypeBind,
-					Source:   hostSock,
-					Target:   containerSock,
-					ReadOnly: true,
-				})
-			}
-		}
-		env = append(env, "SSH_AUTH_SOCK="+containerSock)
+	hostSock, containerSock, inVM := agent.SSHAuthSockMount()
+	if m, e := sshAgentForwarding(hostSock, containerSock, inVM, fileExists); m != nil {
+		mounts = append(mounts, *m)
+		env = append(env, e)
+	}
+
+	// Built after all env entries are appended: Config.Env holds a copy of the slice header.
+	containerCfg := &container.Config{
+		Image:      devCfg.Image,
+		Cmd:        cmd,
+		Env:        env,
+		Labels:     labels,
+		WorkingDir: wsTarget,
+		User:       effectiveUser,
 	}
 
 	hostCfg := &container.HostConfig{
@@ -696,6 +687,29 @@ func isSensitiveEnvKey(key string) bool {
 		return true
 	}
 	return false
+}
+
+// sshAgentForwarding returns the bind mount and SSH_AUTH_SOCK entry that forward the
+// host SSH agent into the container, or nil when forwarding is unavailable.
+// Sources inside the Docker Desktop VM (inVM) cannot be checked from the host.
+func sshAgentForwarding(hostSock, containerSock string, inVM bool, exists func(string) bool) (*mount.Mount, string) {
+	if hostSock == "" || containerSock == "" {
+		return nil, ""
+	}
+	if !inVM && !exists(hostSock) {
+		return nil, ""
+	}
+	return &mount.Mount{
+		Type:     mount.TypeBind,
+		Source:   hostSock,
+		Target:   containerSock,
+		ReadOnly: true,
+	}, "SSH_AUTH_SOCK=" + containerSock
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func parseMemoryString(s string) int64 {

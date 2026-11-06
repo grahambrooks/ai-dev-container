@@ -102,7 +102,7 @@ func TestSSHAuthSockMount_Unset(t *testing.T) {
 		}
 	}()
 
-	host, container := SSHAuthSockMount()
+	host, container, _ := SSHAuthSockMount()
 	if host != "" || container != "" {
 		t.Errorf("SSHAuthSockMount() with no SSH_AUTH_SOCK = (%q, %q), want (\"\", \"\")", host, container)
 	}
@@ -119,20 +119,23 @@ func TestSSHAuthSockMount_Set(t *testing.T) {
 		}
 	}()
 
-	host, container := SSHAuthSockMount()
+	host, container, inVM := SSHAuthSockMount()
 	if container == "" {
 		t.Error("SSHAuthSockMount() container socket should not be empty when SSH_AUTH_SOCK is set")
 	}
 	if runtime.GOOS == "darwin" {
-		if host != "" {
-			t.Error("on macOS, host socket should be empty (Docker Desktop injects it)")
+		if host != "/run/host-services/ssh-auth.sock" || container != "/run/host-services/ssh-auth.sock" {
+			t.Errorf("on macOS, sockets = (%q, %q), want Docker Desktop's /run/host-services/ssh-auth.sock for both", host, container)
 		}
-		if container != "/run/host-services/ssh-auth.sock" {
-			t.Errorf("on macOS, container socket = %q, want /run/host-services/ssh-auth.sock", container)
+		if !inVM {
+			t.Error("on macOS, inVM should be true (source path lives in the Docker Desktop VM)")
 		}
 	} else {
 		if host != "/tmp/test-agent.sock" {
 			t.Errorf("on Linux, host socket = %q, want /tmp/test-agent.sock", host)
+		}
+		if inVM {
+			t.Error("on Linux, inVM should be false")
 		}
 	}
 }
