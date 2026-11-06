@@ -281,9 +281,10 @@ func (c *Client) CreateAndStart(
 
 	// SSH agent socket forwarding.
 	hostSock, containerSock, inVM := agent.SSHAuthSockMount()
-	if m, e := sshAgentForwarding(hostSock, containerSock, inVM, fileExists); m != nil {
-		mounts = append(mounts, *m)
-		env = append(env, e)
+	sshFwd := sshAgentForwarding(hostSock, containerSock, inVM, fileExists)
+	if sshFwd != nil {
+		mounts = append(mounts, sshFwd.Mount)
+		env = append(env, sshFwd.Env)
 	}
 
 	// Built after all env entries are appended: Config.Env holds a copy of the slice header.
@@ -299,6 +300,9 @@ func (c *Client) CreateAndStart(
 	hostCfg := &container.HostConfig{
 		Mounts:      mounts,
 		SecurityOpt: []string{"no-new-privileges"},
+	}
+	if sshFwd != nil {
+		hostCfg.GroupAdd = sshFwd.GroupAdd
 	}
 
 	// Capabilities
@@ -689,22 +693,37 @@ func isSensitiveEnvKey(key string) bool {
 	return false
 }
 
-// sshAgentForwarding returns the bind mount and SSH_AUTH_SOCK entry that forward the
-// host SSH agent into the container, or nil when forwarding is unavailable.
-// Sources inside the Docker Desktop VM (inVM) cannot be checked from the host.
-func sshAgentForwarding(hostSock, containerSock string, inVM bool, exists func(string) bool) (*mount.Mount, string) {
+// sshForward is the container configuration needed to forward the host SSH agent.
+type sshForward struct {
+	Mount    mount.Mount
+	Env      string
+	GroupAdd []string
+}
+
+// sshAgentForwarding returns the configuration that forwards the host SSH agent into
+// the container, or nil when forwarding is unavailable.
+// Sources inside the Docker Desktop VM (inVM) cannot be checked from the host. That
+// socket is root:root 0660, so the non-root container user joins group 0 to connect.
+func sshAgentForwarding(hostSock, containerSock string, inVM bool, exists func(string) bool) *sshForward {
 	if hostSock == "" || containerSock == "" {
-		return nil, ""
+		return nil
 	}
 	if !inVM && !exists(hostSock) {
-		return nil, ""
+		return nil
 	}
-	return &mount.Mount{
-		Type:     mount.TypeBind,
-		Source:   hostSock,
-		Target:   containerSock,
-		ReadOnly: true,
-	}, "SSH_AUTH_SOCK=" + containerSock
+	fwd := &sshForward{
+		Mount: mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   hostSock,
+			Target:   containerSock,
+			ReadOnly: true,
+		},
+		Env: "SSH_AUTH_SOCK=" + containerSock,
+	}
+	if inVM {
+		fwd.GroupAdd = []string{"0"}
+	}
+	return fwd
 }
 
 func fileExists(path string) bool {
