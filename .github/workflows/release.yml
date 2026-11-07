@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  # GoReleaser opens the Homebrew formula PR; the last step merges it.
+  pull-requests: write
 
 jobs:
   release:
@@ -27,3 +29,47 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge the Homebrew formula PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          branch="release/formula-${TAG}"
+          pr=$(gh pr list --head "$branch" --state open --json number -q '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            # GoReleaser logs a failed PR but doesn't fail the release, so no
+            # PR is only fine if main already has this version's formula.
+            version="${TAG#v}"
+            if gh api "repos/${GITHUB_REPOSITORY}/contents/HomebrewFormula/ai-dev-container.rb" \
+                 -H "Accept: application/vnd.github.raw" | grep -q "version \"${version}\""; then
+              echo "Formula on main is already ${version}; nothing to merge."
+              exit 0
+            fi
+            echo "::error::GoReleaser did not open a formula PR for ${TAG} (see its log above)"
+            exit 1
+          fi
+          # Wait for any CI on the PR first (see release-kit v2): a PR's
+          # workflow is loaded from its merge ref, which merging removes.
+          sha=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
+          runs=""
+          for _ in $(seq 12); do
+            runs=$(gh run list --commit "$sha" --event pull_request --json databaseId -q '.[].databaseId')
+            [ -n "$runs" ] && break
+            sleep 5
+          done
+          for id in $runs; do
+            if ! timeout 1800 gh run watch "$id" --exit-status --interval 15 >/dev/null; then
+              echo "::error::CI run ${id} on formula PR #${pr} did not pass within 30 minutes; merge it once it is green"
+              exit 1
+            fi
+          done
+          gh pr merge "$pr" --squash --delete-branch || \
+          if ! gh pr merge "$pr" --squash; then
+            state=$(gh pr view "$pr" --json state -q .state)
+            if [ "$state" != "MERGED" ]; then
+              echo "::error::formula PR #${pr} could not be merged (state=${state})"
+              exit 1
+            fi
+          fi

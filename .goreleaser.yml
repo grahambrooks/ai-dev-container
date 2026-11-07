@@ -34,9 +34,18 @@ changelog:
       - "^chore:"
 
 brews:
+  # The formula reaches main through a PR (merged by the release workflow):
+  # the automation-guard ruleset rejects a direct commit to main (GH013/409).
   - repository:
       owner: grahambrooks
       name: ai-dev-container
+      branch: "release/formula-{{ .Tag }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: grahambrooks
+          name: ai-dev-container
+          branch: main
     directory: HomebrewFormula
     homepage: "https://github.com/grahambrooks/ai-dev-container"
     description: "AI-safe development containers with devcontainer.json support"
