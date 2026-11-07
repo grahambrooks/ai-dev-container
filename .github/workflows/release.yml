@@ -60,8 +60,21 @@ jobs:
             sleep 5
           done
           for id in $runs; do
+            # A PR opened with GITHUB_TOKEN gets CI runs that wait for a
+            # maintainer's approval (action_required) and never start on their
+            # own. This PR holds only generated files from a commit whose CI
+            # already ran on main, so don't block on those; do wait for any
+            # run that actually executes.
+            for _ in $(seq 6); do
+              state=$(gh run view "$id" --json status,conclusion -q '.status + "/" + .conclusion')
+              case "$state" in queued/*|requested/*|pending/*) sleep 5 ;; *) break ;; esac
+            done
+            if [ "${state#*/}" = "action_required" ]; then
+              echo "::notice::CI run ${id} on formula PR #${pr} is awaiting approval (PR opened by GITHUB_TOKEN); not waiting for it"
+              continue
+            fi
             if ! timeout 1800 gh run watch "$id" --exit-status --interval 15 >/dev/null; then
-              echo "::error::CI run ${id} on formula PR #${pr} did not pass within 30 minutes; merge it once it is green"
+              echo "::error::CI run ${id} on formula PR #${pr} failed or did not finish within 30 minutes; merge it once it is green"
               exit 1
             fi
           done
